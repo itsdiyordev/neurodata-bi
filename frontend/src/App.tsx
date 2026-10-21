@@ -4,8 +4,9 @@ import { DashboardCanvas } from './components/DashboardCanvas';
 import { CopilotPanel } from './components/CopilotPanel';
 import { LiveDbModal } from './components/LiveDbModal';
 import { DataSanitizerModal } from './components/DataSanitizerModal';
+import { ExecutiveReportModal } from './components/ExecutiveReportModal';
 import { AgentationWrapper } from './components/AgentationWrapper';
-import type { DataProfile, ChartConfig, ChatMessage, KPIData, CleaningReport } from './types';
+import type { DataProfile, ChartConfig, ChatMessage, KPIData, CleaningReport, FailedQuery } from './types';
 
 const API_BASE = 'http://localhost:8000/api';
 
@@ -19,7 +20,14 @@ export const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLiveDbModalOpen, setIsLiveDbModalOpen] = useState<boolean>(false);
   const [isSanitizerModalOpen, setIsSanitizerModalOpen] = useState<boolean>(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
   const [cleaningReport, setCleaningReport] = useState<CleaningReport | null>(null);
+
+  // Self-Healing Telemetry State
+  const [isHealed, setIsHealed] = useState<boolean>(false);
+  const [healingAttempts, setHealingAttempts] = useState<number>(0);
+  const [failedQueries, setFailedQueries] = useState<FailedQuery[]>([]);
+  const [latestAiExplanation, setLatestAiExplanation] = useState<string>('');
 
   // Persistent session ID saved in localStorage
   const [sessionId] = useState<string>(() => {
@@ -115,7 +123,6 @@ export const App: React.FC = () => {
       const rowsTrimmed = report?.rows_removed || 0;
       const health = report?.data_health_score || 99.4;
 
-      // Add welcome message from Copilot highlighting Auto-Sanitizer
       const welcomeMsg: ChatMessage = {
         id: `msg-${Date.now()}`,
         sender: 'ai',
@@ -177,8 +184,8 @@ export const App: React.FC = () => {
     }
   };
 
-  // 3. Ask Copilot Handler
-  const handleSendMessage = async (text: string) => {
+  // 3. Ask Copilot Handler (with Autonomous Self-Healing Support)
+  const handleSendMessage = async (text: string, simulateHealing: boolean = false) => {
     if (!text.trim() || isLoading) return;
 
     const userMsg: ChatMessage = {
@@ -200,6 +207,7 @@ export const App: React.FC = () => {
         body: JSON.stringify({
           question: text,
           gemini_api_key: geminiApiKey || undefined,
+          simulate_healing: simulateHealing,
         }),
       });
 
@@ -224,6 +232,12 @@ export const App: React.FC = () => {
         setTableData(analysis.data);
       }
 
+      // Update self-healing telemetry
+      setIsHealed(Boolean(analysis.is_healed));
+      setHealingAttempts(analysis.healing_attempts || 0);
+      setFailedQueries(analysis.failed_queries || []);
+      setLatestAiExplanation(analysis.explanation || '');
+
       const aiMsg: ChatMessage = {
         id: `ai-${Date.now()}`,
         sender: 'ai',
@@ -233,6 +247,10 @@ export const App: React.FC = () => {
         execution_time_ms: analysis.execution_time_ms,
         row_count: analysis.row_count,
         reasoning_steps: analysis.reasoning_steps,
+        reasoning_trace: analysis.reasoning_trace,
+        healing_attempts: analysis.healing_attempts,
+        failed_queries: analysis.failed_queries,
+        is_healed: analysis.is_healed,
         chart_config: analysis.chart_config,
         engine: analysis.engine,
       };
@@ -284,12 +302,16 @@ export const App: React.FC = () => {
         executionTimeMs={executionTimeMs}
         isLoading={isLoading}
         cleaningReport={cleaningReport}
+        isHealed={isHealed}
+        healingAttempts={healingAttempts}
+        failedQueries={failedQueries}
         onLoadDemo={handleLoadDemo}
         onUploadClick={() => {
           const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
           fileInput?.click();
         }}
         onOpenSanitizerModal={() => setIsSanitizerModalOpen(true)}
+        onOpenReportModal={() => setIsReportModalOpen(true)}
       />
 
       {/* Column 3: Right Panel (AI Copilot & Mode Switcher - 380px) */}
@@ -315,6 +337,23 @@ export const App: React.FC = () => {
         report={cleaningReport}
         columns={dataProfile?.columns || []}
         tableName={dataProfile?.table_name || 'dataset'}
+        sessionId={sessionId}
+      />
+
+      {/* Modal: One-Click Executive AI Intelligence Report */}
+      <ExecutiveReportModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        tableName={dataProfile?.table_name || 'dataset'}
+        kpis={defaultKpis}
+        chartConfig={chartConfig}
+        tableData={tableData}
+        sqlQuery={sqlQuery}
+        executionTimeMs={executionTimeMs}
+        latestAiExplanation={latestAiExplanation}
+        isHealed={isHealed}
+        healingAttempts={healingAttempts}
+        cleaningReport={cleaningReport}
         sessionId={sessionId}
       />
 

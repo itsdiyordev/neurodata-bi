@@ -65,3 +65,39 @@
 .glow-indicator {
   box-shadow: 0 0 12px currentColor;
 }
+
+/* Print Styles for Executive Intelligence Report */
+@media print {
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  aside, 
+  .copilot-panel, 
+  .agentation-toolbar,
+  button, 
+  input,
+  header {
+    display: none !important;
+  }
+
+  .executive-report-printable {
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+  }
+
+  /* Force page breaks cleanly */
+  .page-break {
+    page-break-after: always;
+  }
+}
+

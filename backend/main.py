@@ -39,6 +39,7 @@ app.add_middleware(
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=1000, description="Analytical natural language question")
     gemini_api_key: Optional[str] = Field(None, description="Optional user Gemini API Key")
+    simulate_healing: Optional[bool] = Field(False, description="Simulate an intentional query failure to demonstrate the self-healing agent loop")
 
 class QueryRequest(BaseModel):
     sql: str = Field(..., min_length=5, description="DuckDB SQL query")
@@ -184,7 +185,8 @@ def ask_question(payload: AskRequest):
     try:
         analysis = ai_analyst.analyze_question(
             question=payload.question,
-            user_api_key=payload.gemini_api_key
+            user_api_key=payload.gemini_api_key,
+            simulate_healing=bool(payload.simulate_healing)
         )
         return analysis
     except ValueError as val_err:

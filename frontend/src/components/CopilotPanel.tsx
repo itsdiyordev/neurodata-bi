@@ -11,15 +11,19 @@ import {
   Clock, 
   BarChart, 
   TrendingUp, 
-  ShieldAlert
+  ShieldCheck,
+  AlertTriangle,
+  CheckCircle2,
+  Wrench,
+  FlaskConical
 } from 'lucide-react';
-import type { ChatMessage } from '../types';
+import type { ChatMessage, ReasoningTraceStep } from '../types';
 
 interface CopilotPanelProps {
   messages: ChatMessage[];
   isLoading: boolean;
   hasData: boolean;
-  onSendMessage: (text: string) => void;
+  onSendMessage: (text: string, simulateHealing?: boolean) => void;
   geminiApiKey: string;
   onApiKeyChange: (key: string) => void;
 }
@@ -35,6 +39,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   const [mode, setMode] = useState<'analyst' | 'scientist'>('analyst');
   const [inputText, setInputText] = useState('');
   const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+  const [showDiff, setShowDiff] = useState<Record<string, boolean>>({});
   const [showKeyModal, setShowKeyModal] = useState(false);
   const [tempKey, setTempKey] = useState(geminiApiKey);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -56,6 +61,13 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     }));
   };
 
+  const handleToggleDiff = (msgId: string) => {
+    setShowDiff(prev => ({
+      ...prev,
+      [msgId]: !prev[msgId]
+    }));
+  };
+
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!inputText.trim() || isLoading) return;
@@ -68,8 +80,23 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
     setShowKeyModal(false);
   };
 
+  const getStepIcon = (status: ReasoningTraceStep['status']) => {
+    switch (status) {
+      case 'success':
+        return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />;
+      case 'healed':
+        return <Wrench className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5 animate-bounce" />;
+      case 'error':
+        return <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0 mt-0.5" />;
+      case 'warning':
+        return <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />;
+      default:
+        return <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0 mt-1.5" />;
+    }
+  };
+
   return (
-    <aside className="w-[380px] h-full flex flex-col bg-obsidian-900 border-l border-slate-800/80 shrink-0 select-none">
+    <aside className="w-[380px] h-full flex flex-col bg-obsidian-900 border-l border-slate-800/80 shrink-0 select-none copilot-panel">
       {/* Top Segmented Mode Toggle */}
       <div className="p-3 border-b border-slate-800/80">
         <div className="grid grid-cols-2 p-1 rounded-xl bg-slate-950/70 border border-slate-800/80">
@@ -107,7 +134,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
           {mode === 'analyst' ? (
             <span className="flex items-center gap-1.5 text-[11px] font-mono text-indigo-300">
               <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
-              Phase 1 Active &bull; DuckDB SQL
+              DuckDB Persistent &bull; Self-Healing
             </span>
           ) : (
             <span className="flex items-center gap-1.5 text-[11px] font-mono text-purple-300">
@@ -128,25 +155,20 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         </button>
       </div>
 
-      {/* MODE 1: AI DATA ANALYST (Active Phase 1) */}
+      {/* MODE 1: AI DATA ANALYST (Active) */}
       {mode === 'analyst' ? (
-        <div className="flex-1 flex flex-col min-h-0">
-          {/* Chat Message Stream */}
+        <div className="flex-1 flex flex-col justify-between overflow-hidden">
+          {/* Chat Stream Area */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
             {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center p-4">
+              <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400">
                 <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 mb-3 shadow-glow-indigo">
                   <Bot className="w-6 h-6" />
                 </div>
-                <h4 className="text-sm font-semibold text-white font-sans">NeuroData Copilot Ready</h4>
-                <p className="text-xs text-slate-400 mt-1 max-w-xs">
-                  Ask analytical business questions. The agent synthesizes DuckDB SQL and renders charts reactively.
+                <h4 className="text-sm font-semibold text-white">NeuroData Copilot</h4>
+                <p className="text-xs text-slate-400 mt-1 max-w-[240px]">
+                  Autonomous Data Analyst with in-memory DuckDB analytical execution & self-healing query repair.
                 </p>
-                {!hasData && (
-                  <div className="mt-4 p-2.5 rounded-xl bg-slate-900/40 border border-slate-800 text-[11px] text-indigo-300">
-                    💡 Click <span className="font-semibold text-white">Load Demo Dataset</span> in the sidebar to start immediately!
-                  </div>
-                )}
               </div>
             ) : (
               messages.map((msg) => (
@@ -166,7 +188,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                         <Bot className="w-3 h-3 text-indigo-400" />
                         <span className="text-indigo-400 font-medium">NeuroData Copilot</span>
                         <span className="text-slate-600">&bull;</span>
-                        <span>{msg.engine || 'DuckDB Engine'}</span>
+                        <span>{msg.engine || 'DuckDB Persistent'}</span>
                       </>
                     )}
                   </div>
@@ -178,11 +200,48 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                     </div>
                   ) : (
                     <div className="max-w-[95%] w-full glass-panel-elevated p-3.5 rounded-2xl rounded-tl-sm border border-slate-800 text-xs space-y-3">
+                      {/* Self-Healed SQL Telemetry Badge */}
+                      {msg.is_healed && (
+                        <div className="flex items-center justify-between p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono shadow-glow-emerald">
+                          <div className="flex items-center gap-1.5">
+                            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                            <span>
+                              <strong>Self-Healed SQL:</strong> Fixed in {msg.healing_attempts || 1} retry
+                            </span>
+                          </div>
+                          {msg.failed_queries && msg.failed_queries.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => handleToggleDiff(msg.id)}
+                              className="px-2 py-0.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-[10px] text-emerald-200 border border-emerald-500/30 btn-press"
+                            >
+                              {showDiff[msg.id] ? 'Hide' : 'Inspect'}
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Expandable Failed Query Inspection */}
+                      {showDiff[msg.id] && msg.failed_queries && msg.failed_queries.length > 0 && (
+                        <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-[11px] font-mono space-y-1.5">
+                          <div className="text-rose-400 font-bold flex items-center gap-1">
+                            <AlertTriangle className="w-3 h-3" />
+                            <span>Intercepted DuckDB Error (Attempt #{msg.failed_queries[0].attempt})</span>
+                          </div>
+                          <pre className="p-2 rounded bg-slate-950/80 text-rose-300 text-[10px] whitespace-pre-wrap overflow-x-auto border border-rose-500/20">
+                            {msg.failed_queries[0].sql}
+                          </pre>
+                          <div className="text-[10px] text-rose-400">
+                            <strong>Diagnostic:</strong> {msg.failed_queries[0].error}
+                          </div>
+                        </div>
+                      )}
+
                       {/* Executive Explanation */}
                       <p className="text-slate-200 leading-relaxed font-sans">{msg.text}</p>
 
                       {/* Expandable AI Reasoning Steps Accordion */}
-                      {msg.reasoning_steps && msg.reasoning_steps.length > 0 && (
+                      {((msg.reasoning_trace && msg.reasoning_trace.length > 0) || (msg.reasoning_steps && msg.reasoning_steps.length > 0)) && (
                         <div className="rounded-xl border border-slate-800/80 bg-slate-950/60 overflow-hidden">
                           <button
                             type="button"
@@ -191,7 +250,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                           >
                             <span className="flex items-center gap-1.5 font-semibold">
                               <BrainCircuit className="w-3.5 h-3.5 text-indigo-400" />
-                              <span>🧠 AI Reasoning Steps ({msg.reasoning_steps.length})</span>
+                              <span>🧠 AI Reasoning Steps ({(msg.reasoning_trace || msg.reasoning_steps || []).length})</span>
                             </span>
                             {expandedReasoning[msg.id] ? (
                               <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
@@ -201,13 +260,32 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                           </button>
 
                           {expandedReasoning[msg.id] && (
-                            <div className="p-3 space-y-2 border-t border-slate-800/60 font-mono text-[10px] text-slate-400 leading-relaxed">
-                              {msg.reasoning_steps.map((step, idx) => (
-                                <div key={idx} className="flex items-start gap-2">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1 shrink-0" />
-                                  <span>{step}</span>
-                                </div>
-                              ))}
+                            <div className="p-3 space-y-2 border-t border-slate-800/60 font-mono text-[10px] leading-relaxed">
+                              {msg.reasoning_trace ? (
+                                msg.reasoning_trace.map((tStep, idx) => (
+                                  <div key={idx} className="flex items-start gap-2 text-slate-300">
+                                    {getStepIcon(tStep.status)}
+                                    <div className="flex-1">
+                                      <span className={`font-semibold ${
+                                        tStep.status === 'healed' ? 'text-emerald-300' :
+                                        tStep.status === 'error' ? 'text-rose-400' :
+                                        tStep.status === 'warning' ? 'text-amber-400' :
+                                        tStep.status === 'success' ? 'text-emerald-400' : 'text-slate-200'
+                                      }`}>
+                                        {tStep.step}:{' '}
+                                      </span>
+                                      <span className="text-slate-400">{tStep.detail}</span>
+                                    </div>
+                                  </div>
+                                ))
+                              ) : (
+                                msg.reasoning_steps?.map((step, idx) => (
+                                  <div key={idx} className="flex items-start gap-2 text-slate-400">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 mt-1 shrink-0" />
+                                    <span>{step}</span>
+                                  </div>
+                                ))
+                              )}
                             </div>
                           )}
                         </div>
@@ -218,7 +296,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                         <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-800/60">
                           <span className="flex items-center gap-1 text-emerald-400">
                             <Clock className="w-3 h-3" />
-                            <span>Executed in {msg.execution_time_ms || 8.4} ms</span>
+                            <span>Executed in {msg.execution_time_ms || 4.2} ms</span>
                           </span>
                           <span className="text-slate-400">{msg.row_count || 0} rows</span>
                         </div>
@@ -234,7 +312,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                 <span className="w-3.5 h-3.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin mt-0.5" />
                 <div className="space-y-1 font-mono text-[11px]">
                   <div>Analyzing table schema & synthesizing DuckDB SQL...</div>
-                  <div className="text-[10px] text-slate-500">Vectorizing in-memory analytical query</div>
+                  <div className="text-[10px] text-slate-500">Autonomous self-healing loop active</div>
                 </div>
               </div>
             )}
@@ -245,10 +323,23 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
           <div className="p-3 border-t border-slate-800/80 bg-obsidian-950/70 space-y-2">
             {/* Quick Prompt Chips */}
             <div className="space-y-1">
-              <div className="text-[10px] uppercase font-mono tracking-wider text-slate-500 font-semibold px-1">
-                Suggested Inquiries
+              <div className="text-[10px] uppercase font-mono tracking-wider text-slate-500 font-semibold px-1 flex items-center justify-between">
+                <span>Suggested Inquiries</span>
+                <span className="text-[9px] text-indigo-400 font-normal">Click to Ask</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
+                {/* Special Test Self-Healing Button */}
+                <button
+                  type="button"
+                  onClick={() => onSendMessage("Test Self-Healing: Analyze top product sales", true)}
+                  disabled={isLoading || !hasData}
+                  className="px-2.5 py-1 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-500/30 rounded-lg btn-press flex items-center gap-1 shadow-glow-emerald disabled:opacity-40"
+                  title="Simulates an intentional query error caught and auto-repaired by DuckDB self-healing agent loop"
+                >
+                  <FlaskConical className="w-3 h-3 text-emerald-400" />
+                  <span>🧪 Test Self-Healing</span>
+                </button>
+
                 {quickPrompts.map((promptText, i) => (
                   <button
                     key={i}
@@ -320,89 +411,63 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
               Simulate Q3 Forecast Run &rarr;
             </button>
           </div>
-
-          {/* Interactive ML Simulator 2: Customer Churn Probability */}
-          <div className="glass-panel p-4 rounded-xl border border-slate-800/80 space-y-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold text-white flex items-center gap-1.5">
-                <ShieldAlert className="w-3.5 h-3.5 text-amber-400" />
-                <span>Customer Churn Risk Scoring</span>
-              </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                XGBoost Classifier
-              </span>
-            </div>
-            <div className="space-y-2 text-xs">
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-slate-400">SMB Low-Activity Tier:</span>
-                <span className="font-mono text-amber-400 font-semibold">24.5% Risk</span>
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                <div className="h-full bg-amber-400 rounded-full" style={{ width: '24.5%' }} />
-              </div>
-
-              <div className="flex items-center justify-between text-[11px]">
-                <span className="text-slate-400">Enterprise High-Volume:</span>
-                <span className="font-mono text-emerald-400 font-semibold">3.8% Risk</span>
-              </div>
-              <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden">
-                <div className="h-full bg-emerald-400 rounded-full" style={{ width: '3.8%' }} />
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={() => onSendMessage("Which customer segment has the highest retention and churn risk?")}
-              className="w-full py-1.5 text-xs font-medium text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 rounded-lg border border-amber-500/30 btn-press text-center"
-            >
-              Analyze Churn Drivers &rarr;
-            </button>
-          </div>
         </div>
       )}
 
-      {/* Gemini API Key Configuration Modal */}
+      {/* Google Gemini API Key Modal */}
       {showKeyModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-md glass-panel-elevated rounded-2xl p-6 border border-slate-700/80 shadow-2xl space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-                <Key className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div 
+            className="w-full max-w-sm p-5 rounded-2xl bg-obsidian-900 border border-slate-700 shadow-2xl space-y-4 text-slate-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400">
+                  <Key className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-bold text-white">Google Gemini API Key</h3>
               </div>
-              <div>
-                <h3 className="text-sm font-semibold text-white">Google Gemini API Key</h3>
-                <p className="text-xs text-slate-400">Optional: Connect your live Gemini 2.5 Flash key</p>
-              </div>
+              <button 
+                type="button" 
+                onClick={() => setShowKeyModal(false)}
+                className="text-slate-400 hover:text-white text-xs"
+              >
+                ✕
+              </button>
             </div>
 
-            <p className="text-xs text-slate-300 leading-relaxed">
-              If left blank, NeuroData BI runs with our <span className="text-indigo-400 font-medium">Smart Mock & Deterministic DuckDB Engine</span>, which generates real SQL queries and visualizations for demo data!
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Enter your Gemini API key to query Gemini 2.5 Flash directly. If left blank, NeuroData BI runs seamlessly on the offline DuckDB Analytical Engine.
             </p>
 
             <div>
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">GEMINI_API_KEY</label>
               <input
                 type="password"
                 value={tempKey}
                 onChange={(e) => setTempKey(e.target.value)}
                 placeholder="AIzaSy..."
-                className="w-full px-3 py-2 text-xs font-mono rounded-lg bg-slate-950/70 border border-slate-800 text-slate-200 focus:outline-none focus:border-indigo-500"
+                className="w-full px-3 py-2 text-xs font-mono rounded-xl bg-slate-950 border border-slate-700 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
               />
+              <span className="text-[10px] text-slate-500 mt-1 block">
+                Saved securely in browser local storage. Never sent to third parties.
+              </span>
             </div>
 
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setShowKeyModal(false)}
-                className="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white rounded-lg hover:bg-slate-800/60 btn-press"
+                onClick={() => { setTempKey(''); onApiKeyChange(''); setShowKeyModal(false); }}
+                className="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
               >
-                Cancel
+                Clear Key
               </button>
               <button
                 type="button"
                 onClick={handleSaveKey}
-                className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white shadow-glow-indigo btn-press"
+                className="px-4 py-1.5 rounded-lg text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-glow-indigo transition-colors"
               >
-                Save Settings
+                Save Key
               </button>
             </div>
           </div>

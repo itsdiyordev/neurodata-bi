@@ -56,6 +56,18 @@ export interface DataProfile {
   cleaning_report?: CleaningReport;
 }
 
+export interface ReasoningTraceStep {
+  step: string;
+  status: 'info' | 'warning' | 'error' | 'healed' | 'success';
+  detail: string;
+}
+
+export interface FailedQuery {
+  attempt: number;
+  sql: string;
+  error: string;
+}
+
 export interface ChatMessage {
   id: string;
   sender: 'user' | 'ai';
@@ -65,6 +77,10 @@ export interface ChatMessage {
   execution_time_ms?: number;
   row_count?: number;
   reasoning_steps?: string[];
+  reasoning_trace?: ReasoningTraceStep[];
+  healing_attempts?: number;
+  failed_queries?: FailedQuery[];
+  is_healed?: boolean;
   chart_config?: ChartConfig;
   engine?: string;
 }

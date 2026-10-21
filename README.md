@@ -17,28 +17,34 @@
 - **Smart Type Coercion**: Detects string currencies (`"$1,250.00"`, `"10,500 сум"`, `"45%"`) and dates, auto-coercing them to `DOUBLE`, `INTEGER`, and `DATE` so DuckDB analytical functions (`SUM()`, `AVG()`) run without type errors.
 - **Data Health Scoring**: Calculates an automated data quality score and produces an interactive ETL cleaning report.
 
-### 3. Zero Data Exposure LLM Architecture (`backend/ai_analyst.py`)
-- **Schema-Only Synthesis**: Never passes raw data rows or sensitive customer PII to external LLMs. Only column names, data types, and 3 sample rows are provided to the prompt.
-- **Gemini 2.5 Flash with Strict JSON Schema**: Outputs valid DuckDB SQL, chart configuration, and an executive-level business explanation.
-- **Smart Deterministic Fallback Parser**: Even if `GEMINI_API_KEY` is not provided, the platform seamlessly runs DuckDB analytical queries for demo prompts and queries without failing.
+### 3. Autonomous Self-Healing SQL Agent Loop (`backend/ai_analyst.py`)
+- **Multi-Attempt Retry Loop (`max_retries = 3`)**: Automatically catches DuckDB execution errors (`Binder Error`, `Parser Error`, unquoted identifiers, or missing columns) and feeds exact error telemetry back to Gemini or the schema healer for instant autonomous repair.
+- **Detailed Reasoning Trace & Telemetry**: Every analytical response includes structured trace steps (`info`, `warning`, `error`, `healed`, `success`) rendering the entire diagnosis and repair lifecycle.
+- **Thesis Defense Simulation Chip**: Features a dedicated `🧪 Test Self-Healing` chip that simulates an intentional column binder error being caught by DuckDB and automatically repaired live.
 
-### 3. Obsidian Dark Mode Design System (`/frontend`)
+### 4. Executive AI Intelligence Report & CSV Export Suite (`/frontend`)
+- **One-Click Executive Report Modal (`📥 Export AI Report`)**: C-suite/McKinsey-grade presentation modal with KPI summary cards, embedded Recharts visualization, verified DuckDB SQL runtime telemetry, and top 15 rows lineage.
+- **Pristine PDF Printing**: Built-in `@media print` CSS engine allowing clean browser printing (`window.print()`) directly to PDF without sidebar/chat clutter.
+- **Markdown Export**: Instant `📋 Copy Markdown Summary` button copying an executive briefing to clipboard.
+- **Client-Side CSV Export (`⬇️ Download CSV`)**: Export the active query result table directly to a local `.csv` file from the Data Preview tab.
+
+### 5. Obsidian Dark Mode Design System (`/frontend`)
 - **Craft & Micro-Interactions** (following Emil Kowalski & Jakub Krehel design engineering):
   - Custom Obsidian palette: `#090D16` deep space background, `#111827/80` glassmorphic cards with `backdrop-blur-md`
   - Electric Indigo (`#6366F1`) & Neon Purple (`#A855F7`) accents
   - Tactile button press feedback: `:active` state with `scale(0.97)` and custom spring easing (`cubic-bezier(0.23, 1, 0.32, 1)`)
   - Optical alignment and `tabular-nums` for rock-solid metric counters
 - **3-Column Split-Screen Workspace (`h-screen overflow-hidden flex`)**:
-  1. **Left Sidebar (260px)**: Custom SVG logo, file upload trigger, instant Demo dataset loader, Phase 2 Live DB modal trigger, and interactive Schema Explorer Tree.
+  1. **Left Sidebar (260px)**: Custom SVG logo, file upload trigger, instant Demo dataset loader, Phase 2 Live DB modal trigger, Auto-Cleaned ETL badge, and interactive Schema Explorer Tree with original header subtitles.
   2. **Center Main Canvas (~60% width)**:
      - Empty state with glowing drag-and-drop zone and prominent demo launcher.
-     - 4 Top KPI cards.
+     - 4 Top KPI cards (with interactive Auto-Cleaned ETL trigger).
      - Interactive Recharts canvas (`BarChart`, `LineChart`, `AreaChart` with dynamic toggle).
-     - Tabbed Inspector: Tab 1 (`📋 Data Preview` with pagination) & Tab 2 (`</> Generated SQL` with execution telemetry in ms).
+     - Tabbed Inspector: Tab 1 (`📋 Data Preview` with pagination + CSV download) & Tab 2 (`</> Generated SQL` with execution telemetry and Self-Healed query comparison diff).
   3. **Right Panel (380px)**:
      - Segmented mode switcher: `📊 AI Data Analyst` (active) vs `🔮 AI Data Scientist` (Phase 3 preview).
-     - Chat stream with expandable **"🧠 AI Reasoning Steps"** accordion.
-     - Quick Prompt chips (`"What is our best-selling product?"`, `"Why did sales drop in March?"`, `"Show top 5 categories by revenue"`).
+     - Chat stream with rich **"🧠 AI Reasoning Steps"** trace accordion and **`🛡️ Self-Healed SQL`** inspection cards.
+     - Quick Prompt chips (`"What is our best-selling product?"`, `"Why did sales drop in March?"`, `"Show top 5 categories by revenue"`, and `"🧪 Test Self-Healing"`).
      - Gemini API key input modal + Smart Mock status badge.
   4. **Agentation Visual Feedback**: Integrated directly on the canvas for instant UI annotation.
 
