@@ -8,7 +8,9 @@ import { ExecutiveReportModal } from './components/ExecutiveReportModal';
 import { AgentationWrapper } from './components/AgentationWrapper';
 import type { DataProfile, ChartConfig, ChatMessage, KPIData, CleaningReport, FailedQuery } from './types';
 
-const API_BASE = 'http://localhost:8000/api';
+// Dynamic API base: uses relative /api when built/containerized, or localhost:8000 when running standalone Vite dev
+const API_BASE = (import.meta as any).env?.VITE_API_BASE || 
+  (typeof window !== 'undefined' && window.location.port === '5173' ? 'http://localhost:8000/api' : '/api');
 
 export const App: React.FC = () => {
   const [dataProfile, setDataProfile] = useState<DataProfile | null>(null);

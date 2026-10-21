@@ -4,6 +4,8 @@ import shutil
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 import pandas as pd
 from dotenv import load_dotenv
@@ -215,6 +217,50 @@ def get_current_profile():
     if not db_manager.has_data:
         return {"has_data": False, "columns": [], "kpis": {}}
     return db_manager.get_data_profile()
+
+# Static files / SPA serving (supports containerized and unified deployment)
+FRONTEND_DIST = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend", "dist"))
+STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
+
+dist_dir = STATIC_DIR if os.path.isdir(STATIC_DIR) else (FRONTEND_DIST if os.path.isdir(FRONTEND_DIST) else None)
+
+if dist_dir and os.path.isdir(dist_dir):
+    assets_dir = os.path.join(dist_dir, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/", include_in_schema=False)
+    async def serve_index():
+        index_file = os.path.join(dist_dir, "index.html")
+        if os.path.isfile(index_file):
+            return FileResponse(index_file)
+        return {
+            "service": "NeuroData BI Engine",
+            "status": "online",
+            "docs": "/docs",
+            "api_health": "/api/health"
+        }
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str):
+        if full_path.startswith("api/") or full_path == "api" or full_path.startswith("docs") or full_path.startswith("openapi.json"):
+            raise HTTPException(status_code=404, detail="API route not found")
+        file_path = os.path.join(dist_dir, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        index_file = os.path.join(dist_dir, "index.html")
+        if os.path.isfile(index_file):
+            return FileResponse(index_file)
+        raise HTTPException(status_code=404, detail="Resource not found")
+else:
+    @app.get("/", include_in_schema=False)
+    async def serve_api_info():
+        return {
+            "service": "NeuroData BI Engine",
+            "status": "online",
+            "docs": "/docs",
+            "api_health": "/api/health"
+        }
 
 if __name__ == "__main__":
     import uvicorn

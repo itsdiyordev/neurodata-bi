@@ -55,14 +55,46 @@
 | Layer | Technologies |
 |---|---|
 | **Frontend** | React 19, TypeScript, Vite, Tailwind CSS, Lucide React, Recharts, Framer Motion, Agentation |
-| **Backend** | Python 3.10+, FastAPI, Uvicorn, DuckDB (In-Memory), Pandas, Openpyxl, Google GenAI SDK (`google-genai`) |
+| **Backend** | Python 3.11+, FastAPI, Uvicorn, DuckDB (Persistent Storage), Pandas, Openpyxl, Google GenAI SDK (`google-genai`) |
+| **Container & Ops** | Docker (Multi-stage build), Docker Compose, Alpine Linux & Debian Slim |
 | **Design System** | Obsidian Dark Mode, Inter, JetBrains Mono, Emil Kowalski micro-interactions |
 
 ---
 
 ## 🏁 Quick Start & Running Locally
 
-### Option A: One-Click Launch (Windows)
+### Option A: Docker Deployment (Recommended for Production)
+
+Launch the entire unified stack (Frontend + FastAPI Backend + Persistent DuckDB Storage) with one command:
+
+```bash
+docker compose up --build -d
+```
+*Application & Dashboard will be live at: [http://localhost:8000](http://localhost:8000)*
+*API Swagger Documentation will be live at: [http://localhost:8000/docs](http://localhost:8000/docs)*
+
+To stop the container:
+```bash
+docker compose down
+```
+
+#### Standalone Docker Run:
+```bash
+# 1. Build the production image
+docker build -t neurodata-bi .
+
+# 2. Run with persistent volume for DuckDB datasets
+docker run -d \
+  --name neurodata-bi-app \
+  -p 8000:8000 \
+  -e GEMINI_API_KEY="your-gemini-key-here" \
+  -v neurodata_storage:/app/backend/data \
+  neurodata-bi
+```
+
+---
+
+### Option B: One-Click Launch (Windows Local Dev)
 Run the root batch file:
 ```cmd
 start_all.bat
@@ -72,7 +104,9 @@ Or for PowerShell:
 .\run_dev.ps1
 ```
 
-### Option B: Manual Launch
+---
+
+### Option C: Manual Launch (Local Dev)
 
 #### 1. Start the Backend
 ```cmd
