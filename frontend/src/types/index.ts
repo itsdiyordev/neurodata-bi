@@ -83,4 +83,6 @@ export interface ChatMessage {
   is_healed?: boolean;
   chart_config?: ChartConfig;
   engine?: string;
+  context_strategy?: string;
+  context_summary?: string;
 }

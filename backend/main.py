@@ -238,10 +238,11 @@ def clear_chat_history(
     x_session_id: Optional[str] = Header(None)
 ):
     """
-    Deletes all persistent chat history for the active session, resetting the memory window.
+    Deletes all persistent chat history for the active session, resetting the memory window and cached summary.
     """
     sid = session_id or x_session_id or db_manager.active_session_id or "default_session"
     deleted_count = db_manager.clear_chat_history(sid)
+    ai_analyst.clear_session_summary(sid)
     return {
         "success": True,
         "session_id": sid,

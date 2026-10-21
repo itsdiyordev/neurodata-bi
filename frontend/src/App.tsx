@@ -260,6 +260,8 @@ export const App: React.FC = () => {
         is_healed: analysis.is_healed,
         chart_config: analysis.chart_config,
         engine: analysis.engine,
+        context_strategy: analysis.context_strategy,
+        context_summary: analysis.context_summary,
       };
 
       setMessages((prev) => [...prev, aiMsg]);

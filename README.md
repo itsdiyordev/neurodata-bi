@@ -35,7 +35,14 @@
 - **Interactive Historical Snapshot Restores (`🔄 Load on Canvas`)**: Every past AI message in the chat history features a mini-button that re-renders that past query's interactive chart, SQL code, and data table back onto the Main Canvas.
 - **Memory Status Counter & Reset**: Features a live `🧠 Memory Active: X/100 msgs` badge in the chat panel with a one-click `🗑️ Clear Memory` action (`DELETE /api/chat/clear`).
 
-### 6. Obsidian Dark Mode Design System (`/frontend`)
+### 6. Smart Context Summarization & Token Optimization (Rolling Memory Window) (`backend/ai_analyst.py`)
+- **Threshold & Split Logic**: When conversations grow beyond 15 messages (up to 100), the backend automatically splits history: the **last 10 messages** are preserved verbatim for exact SQL & context follow-ups, while older messages are compressed into an executive summary block.
+- **Automated Summary Generator (`generate_conversation_summary`)**: Utilizes `gemini-2.5-flash` to condense multi-turn conversational history into a tight, bulleted executive summary block under 120 words with deterministic offline fallbacks.
+- **Session-Level Summary Caching**: Reuses computed summaries across turns as long as the older message count remains unchanged, eliminating redundant LLM summarization calls and keeping latency sub-second.
+- **Backend Telemetry & Strategy Reporting**: Responses stream live telemetry (`context_strategy`: `"full_history"` vs `"summarized_rolling_window"`, `history_total_count`, `verbatim_count`, `summarized_count`) directly to the client.
+- **Smart Compressed Chat Badge**: The chat header dynamically switches to `🧠 Memory Active: {X} msgs (Smart Compressed)` with emerald status and compression tooltips as soon as history exceeds 15 messages.
+
+### 7. Obsidian Dark Mode Design System (`/frontend`)
 - **Craft & Micro-Interactions** (following Emil Kowalski & Jakub Krehel design engineering):
   - Custom Obsidian palette: `#090D16` deep space background, `#111827/80` glassmorphic cards with `backdrop-blur-md`
   - Electric Indigo (`#6366F1`) & Neon Purple (`#A855F7`) accents

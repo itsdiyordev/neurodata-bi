@@ -161,14 +161,26 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         </button>
       </div>
 
-      {/* Deep Conversational Memory Bar (50-100 message context window) */}
+      {/* Deep Conversational Memory Bar (Smart Summarization & Rolling Window) */}
       <div className="px-3.5 py-1.5 bg-slate-950/70 border-b border-slate-800/70 flex items-center justify-between">
         <div 
-          className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 shadow-glow-indigo cursor-help"
-          title="Active persistent DuckDB memory context window (retains up to 100 turns across page reloads & server restarts)"
+          className={`flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold cursor-help transition-all ${
+            messages.length > 15
+              ? 'bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 shadow-glow-emerald'
+              : 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 shadow-glow-indigo'
+          }`}
+          title={
+            messages.length > 15
+              ? "Smart Context Optimization Active: Older messages automatically summarized to eliminate token bloat and maintain sub-second response times while retaining the last 10 turns verbatim."
+              : "Active persistent DuckDB memory context window (retains up to 100 turns across page reloads & server restarts)."
+          }
         >
-          <BrainCircuit className="w-3 h-3 text-indigo-400 animate-pulse" />
-          <span>🧠 Memory Active: {messages.length}/100 msgs</span>
+          <BrainCircuit className={`w-3 h-3 ${messages.length > 15 ? 'text-emerald-400' : 'text-indigo-400'} animate-pulse`} />
+          <span>
+            {messages.length > 15 
+              ? `🧠 Memory Active: ${messages.length} msgs (Smart Compressed)` 
+              : `🧠 Memory Active: ${messages.length}/100 msgs`}
+          </span>
         </div>
 
         <button

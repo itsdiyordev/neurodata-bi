@@ -17,6 +17,101 @@ class AIAnalystEngine:
     """
     def __init__(self):
         self.default_api_key = os.getenv("GEMINI_API_KEY", "")
+        # Session summary cache: session_id -> {"older_count": int, "summary": str}
+        self._session_summaries: Dict[str, Dict[str, Any]] = {}
+
+    def clear_session_summary(self, session_id: str) -> None:
+        """Clears the cached summary for a session when its history is reset."""
+        self._session_summaries.pop(session_id, None)
+
+    def generate_conversation_summary(
+        self, 
+        older_messages: List[Dict[str, Any]], 
+        client: Optional[genai.Client] = None
+    ) -> str:
+        """
+        Condenses older messages into a compact executive context block.
+        Uses Gemini 2.5 Flash if client is available, or an intelligent deterministic summarizer.
+        """
+        if not older_messages:
+            return ""
+
+        formatted_turns = []
+        for i, m in enumerate(older_messages, 1):
+            role = "User" if m.get("sender") == "user" else "Assistant"
+            text = m.get("text", "")
+            sql = m.get("sql_query")
+            if sql:
+                formatted_turns.append(f"Turn {i} ({role}): \"{text}\" [SQL: {sql}]")
+            else:
+                formatted_turns.append(f"Turn {i} ({role}): \"{text}\"")
+
+        history_blob = "\n".join(formatted_turns)
+
+        if client:
+            try:
+                system_instruction = (
+                    "You are an executive conversation summarizer for NeuroData BI. "
+                    "Condense the provided historical user questions, analytical findings, and executed DuckDB SQL queries "
+                    "into a concise, bulleted executive context block (under 120 words). "
+                    "Highlight: (1) Key metrics & dimensions investigated, (2) Filters or temporal periods examined, "
+                    "and (3) Main business takeaways. Be dense, direct, and factual."
+                )
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=f"Condense the following {len(older_messages)} historical conversation turns into an executive summary:\n\n{history_blob}",
+                    config=types.GenerateContentConfig(
+                        system_instruction=system_instruction,
+                        temperature=0.0,
+                    )
+                )
+                summary_text = (response.text or "").strip()
+                if summary_text:
+                    return summary_text
+            except Exception as e:
+                print(f"[AIAnalyst] Automated summarization with Gemini failed: {e}. Using deterministic summarizer.")
+
+        # Deterministic / Offline Summarizer
+        user_queries = [m.get("text", "") for m in older_messages if m.get("sender") == "user"]
+        queries_preview = "; ".join([f'"{q}"' for q in user_queries[:5]])
+        if len(user_queries) > 5:
+            queries_preview += f"; and {len(user_queries) - 5} more inquiries"
+
+        executed_sqls = [m.get("sql_query") for m in older_messages if m.get("sql_query")]
+        
+        bullets = [
+            f"User previously investigated: {queries_preview}.",
+            f"Analyzed {len(executed_sqls)} database queries spanning transactional revenue, dimensions, and operational distributions.",
+            "All subsequent follow-ups should preserve context and filters established in these prior investigations."
+        ]
+        return "\n".join([f"• {b}" for b in bullets])
+
+    def _get_or_create_summary(
+        self,
+        session_id: Optional[str],
+        older_messages: List[Dict[str, Any]],
+        client: Optional[genai.Client]
+    ) -> str:
+        """
+        Retrieves cached conversation summary for session if message count has not changed,
+        or generates a fresh summary and caches it.
+        """
+        if not older_messages:
+            return ""
+
+        sid = session_id or "default_session"
+        older_count = len(older_messages)
+
+        cached = self._session_summaries.get(sid)
+        if cached and cached.get("older_count") == older_count and cached.get("summary"):
+            return cached["summary"]
+
+        summary = self.generate_conversation_summary(older_messages, client)
+        self._session_summaries[sid] = {
+            "older_count": older_count,
+            "summary": summary
+        }
+        return summary
 
     def _get_gemini_client(self, user_api_key: Optional[str] = None) -> Optional[genai.Client]:
         key = (user_api_key or "").strip() or self.default_api_key.strip()
@@ -59,7 +154,21 @@ class AIAnalystEngine:
         last_chart = next((m.get("chart_config") for m in reversed(history) if m.get("chart_config")), None)
 
         client = self._get_gemini_client(user_api_key)
-        
+
+        # Smart Context Summarization & Token Optimization:
+        # If <= 15 messages: pass full history verbatim
+        # If > 15 messages: summarize older messages (up to len - 10) and keep last 10 verbatim
+        if len(history) <= 15:
+            context_strategy = "full_history"
+            older_messages: List[Dict[str, Any]] = []
+            recent_messages = history
+            context_summary = None
+        else:
+            context_strategy = "summarized_rolling_window"
+            older_messages = history[:-10]
+            recent_messages = history[-10:]
+            context_summary = self._get_or_create_summary(session_id, older_messages, client)
+
         # Telemetry containers
         reasoning_trace: List[Dict[str, str]] = []
         failed_queries: List[Dict[str, Any]] = []
@@ -72,11 +181,17 @@ class AIAnalystEngine:
             "detail": f"Profiled {len(columns)} columns from table '{table_name}' with zero raw customer PII exposure."
         })
 
-        if history:
+        if context_strategy == "summarized_rolling_window":
             reasoning_trace.append({
-                "step": "Conversational Memory Activated",
+                "step": "Smart Context Summarization Active",
                 "status": "info",
-                "detail": f"Retrieved {len(history)} messages from persistent DuckDB context window. Contextual continuity and follow-up query resolution active."
+                "detail": f"History contains {len(history)} messages. Condensed {len(older_messages)} older turns into compact executive summary; retained last 10 turns verbatim for zero-latency execution."
+            })
+        elif history:
+            reasoning_trace.append({
+                "step": "Conversational Memory Active",
+                "status": "info",
+                "detail": f"Retrieved {len(history)} messages from persistent DuckDB context window (full verbatim mode, <=15 messages)."
             })
 
         # Step 2: Initial generation (Context-Aware)
@@ -85,12 +200,21 @@ class AIAnalystEngine:
 
         if client and not simulate_healing:
             try:
-                result_plan = self._generate_with_gemini(client, question, table_name, columns, sample_rows, history=history)
+                result_plan = self._generate_with_gemini(
+                    client=client, 
+                    question=question, 
+                    table_name=table_name, 
+                    columns=columns, 
+                    sample_rows=sample_rows, 
+                    recent_messages=recent_messages,
+                    context_summary=context_summary
+                )
                 used_llm = True
+                strategy_desc = "smart summarized rolling context" if context_strategy == "summarized_rolling_window" else "full conversation context"
                 reasoning_trace.append({
                     "step": "Contextual Synthesis (Gemini 2.5 Flash)",
                     "status": "info",
-                    "detail": "Generated context-aware SQL query incorporating conversation history and previous analytical constraints."
+                    "detail": f"Generated context-aware SQL query using {strategy_desc} and previous analytical constraints."
                 })
             except Exception as e:
                 print(f"[AIAnalyst] Gemini API call exception: {e}. Falling back to Smart Fallback Engine.")
@@ -239,7 +363,12 @@ class AIAnalystEngine:
             "healing_attempts": healing_attempts,
             "failed_queries": failed_queries,
             "is_healed": healing_attempts > 0,
-            "engine": "gemini-2.5-flash" if used_llm else "smart-duckdb-engine"
+            "engine": "gemini-2.5-flash" if used_llm else "smart-duckdb-engine",
+            "context_strategy": context_strategy,
+            "context_summary": context_summary,
+            "history_total_count": len(history),
+            "verbatim_count": len(recent_messages),
+            "summarized_count": len(older_messages) if context_strategy == "summarized_rolling_window" else 0
         }
 
     def _repair_with_gemini(
@@ -377,17 +506,18 @@ LIMIT 8;
         table_name: str,
         columns: List[Dict[str, str]],
         sample_rows: List[Dict[str, Any]],
-        history: Optional[List[Dict[str, Any]]] = None
+        recent_messages: Optional[List[Dict[str, Any]]] = None,
+        context_summary: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Sends schema, conversational history (up to 100 turns), and question to Gemini 2.5 Flash with strict JSON schema format.
+        Sends schema, executive conversation summary, recent verbatim turns (last 10), and question to Gemini 2.5 Flash.
         """
         schema_text = "\n".join([f"- {col['name']} ({col['type']})" for col in columns])
         samples_text = json.dumps(sample_rows, indent=2, default=str)
 
         history_lines = []
-        if history:
-            for i, msg in enumerate(history[-50:], 1):
+        if recent_messages:
+            for i, msg in enumerate(recent_messages, 1):
                 role = "User" if msg.get("sender") == "user" else "AI Analyst"
                 text = msg.get("text", "")
                 sql = msg.get("sql_query")
@@ -396,7 +526,16 @@ LIMIT 8;
                 else:
                     history_lines.append(f"Turn #{i} [{role}]: {text}")
         
-        history_context = "\n\n".join(history_lines) if history_lines else "No previous conversation context (initial inquiry in thread)."
+        recent_context_text = "\n\n".join(history_lines) if history_lines else "No recent conversation turns."
+
+        context_blocks = []
+        if context_summary:
+            context_blocks.append(f"=== [Previous Context Summary (Condensed from earlier turns)] ===\n{context_summary}")
+        
+        if recent_messages:
+            context_blocks.append(f"=== [Recent Verbatim Conversation Turns (Last {len(recent_messages)} turns)] ===\n{recent_context_text}")
+
+        full_conversation_context = "\n\n".join(context_blocks) if context_blocks else "No previous conversation context (initial inquiry in thread)."
 
         system_instruction = f"""
 You are NeuroData BI, an elite Senior AI Data Analyst & Chief Analytics Officer.
@@ -410,11 +549,11 @@ Columns:
 Sample 3 Rows:
 {samples_text}
 
-Conversational Memory & Prior Turns (Up to 100 messages):
-{history_context}
+Conversational Memory Context:
+{full_conversation_context}
 
 Follow-Up Query Resolution Rules:
-1. You have full access to previous conversation turns and previously executed SQL queries above.
+1. You have full access to the previous context summary and recent verbatim conversation turns above.
 2. If the user asks a follow-up question (e.g. using pronouns like 'that', 'it', or relative phrases like 'now filter that by region', 'exclude the top one', 'show only top 3 from this', 'sort by lowest instead', 'what about April instead?'), you MUST modify and build upon the previous SQL query while maintaining prior filters, aggregations, and analytical context.
 3. If the user asks an unrelated new question, formulate a fresh SQL query for the new topic.
 4. ONLY produce valid, read-only DuckDB SQL (SELECT or WITH). Never use table mutations.
