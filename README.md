@@ -28,7 +28,14 @@
 - **Markdown Export**: Instant `📋 Copy Markdown Summary` button copying an executive briefing to clipboard.
 - **Client-Side CSV Export (`⬇️ Download CSV`)**: Export the active query result table directly to a local `.csv` file from the Data Preview tab.
 
-### 5. Obsidian Dark Mode Design System (`/frontend`)
+### 5. Deep Conversational Memory & Persistent Chat Storage (`backend/database.py` & `ai_analyst.py`)
+- **100-Message Rolling Context Window**: Automatically persists both user questions and AI responses in DuckDB's `chat_history` table with schema-isolated session IDs, enforcing a clean 100-message rolling window per session.
+- **Context-Aware Follow-Up Resolution**: Resolves relative instructions (e.g., *"↳ Show only Top 3 from this"*, *"↳ Sort by lowest instead"*, *"↳ Break this down by region"*, *"↳ Exclude the top one"*), extending and adapting previous SQL queries while retaining existing filter constraints.
+- **F5 Refresh Resilience**: `GET /api/session/restore` retrieves both data profiling and the full message history so conversations survive browser refreshes without losing context.
+- **Interactive Historical Snapshot Restores (`🔄 Load on Canvas`)**: Every past AI message in the chat history features a mini-button that re-renders that past query's interactive chart, SQL code, and data table back onto the Main Canvas.
+- **Memory Status Counter & Reset**: Features a live `🧠 Memory Active: X/100 msgs` badge in the chat panel with a one-click `🗑️ Clear Memory` action (`DELETE /api/chat/clear`).
+
+### 6. Obsidian Dark Mode Design System (`/frontend`)
 - **Craft & Micro-Interactions** (following Emil Kowalski & Jakub Krehel design engineering):
   - Custom Obsidian palette: `#090D16` deep space background, `#111827/80` glassmorphic cards with `backdrop-blur-md`
   - Electric Indigo (`#6366F1`) & Neon Purple (`#A855F7`) accents
@@ -43,7 +50,9 @@
      - Tabbed Inspector: Tab 1 (`📋 Data Preview` with pagination + CSV download) & Tab 2 (`</> Generated SQL` with execution telemetry and Self-Healed query comparison diff).
   3. **Right Panel (380px)**:
      - Segmented mode switcher: `📊 AI Data Analyst` (active) vs `🔮 AI Data Scientist` (Phase 3 preview).
-     - Chat stream with rich **"🧠 AI Reasoning Steps"** trace accordion and **`🛡️ Self-Healed SQL`** inspection cards.
+     - Live Deep Conversational Memory Bar (`🧠 Memory Active: X/100 msgs` + `🗑️ Clear Memory`).
+     - Chat stream with rich **"🧠 AI Reasoning Steps"** trace accordion, **`🛡️ Self-Healed SQL`** inspection cards, and **`🔄 Load on Canvas`** historical buttons.
+     - Dynamic contextual follow-up prompt chips (`"↳ Show only Top 3 from this"`, `"↳ Sort by lowest instead"`, etc.).
      - Quick Prompt chips (`"What is our best-selling product?"`, `"Why did sales drop in March?"`, `"Show top 5 categories by revenue"`, and `"🧪 Test Self-Healing"`).
      - Gemini API key input modal + Smart Mock status badge.
   4. **Agentation Visual Feedback**: Integrated directly on the canvas for instant UI annotation.

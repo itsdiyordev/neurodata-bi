@@ -71,14 +71,18 @@ export const App: React.FC = () => {
             setTableData(data.profile.preview_rows);
           }
 
-          const restoreMsg: ChatMessage = {
-            id: `msg-restore-${Date.now()}`,
-            sender: 'ai',
-            text: `🔄 Active dataset successfully restored from local persistent DuckDB storage (${data.profile.total_records.toLocaleString()} records). Schema and distribution charts are live without data loss.`,
-            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            engine: 'DuckDB Persistent Engine',
-          };
-          setMessages([restoreMsg]);
+          if (data.chat_history && data.chat_history.length > 0) {
+            setMessages(data.chat_history);
+          } else {
+            const restoreMsg: ChatMessage = {
+              id: `msg-restore-${Date.now()}`,
+              sender: 'ai',
+              text: `🔄 Active dataset successfully restored from local persistent DuckDB storage (${data.profile.total_records.toLocaleString()} records). Schema and distribution charts are live without data loss.`,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              engine: 'DuckDB Persistent Engine',
+            };
+            setMessages([restoreMsg]);
+          }
         }
       })
       .catch(() => {
@@ -208,6 +212,7 @@ export const App: React.FC = () => {
         },
         body: JSON.stringify({
           question: text,
+          session_id: sessionId,
           gemini_api_key: geminiApiKey || undefined,
           simulate_healing: simulateHealing,
         }),
@@ -241,7 +246,7 @@ export const App: React.FC = () => {
       setLatestAiExplanation(analysis.explanation || '');
 
       const aiMsg: ChatMessage = {
-        id: `ai-${Date.now()}`,
+        id: analysis.ai_message_id || `ai-${Date.now()}`,
         sender: 'ai',
         text: analysis.explanation,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
@@ -268,6 +273,57 @@ export const App: React.FC = () => {
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // 4. Clear Conversational Memory Handler
+  const handleClearMemory = async () => {
+    try {
+      await fetch(`${API_BASE}/chat/clear?session_id=${sessionId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Session-ID': sessionId,
+        },
+      });
+      setMessages([
+        {
+          id: `msg-cleared-${Date.now()}`,
+          sender: 'ai',
+          text: '🧹 Conversational memory cleared. The 100-message context window has been reset for a fresh analysis.',
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          engine: 'DuckDB Memory Manager',
+        }
+      ]);
+    } catch (err: any) {
+      alert(`Failed to clear memory: ${err.message}`);
+    }
+  };
+
+  // 5. Load Past AI Message on Canvas
+  const handleLoadOnCanvas = (msg: ChatMessage) => {
+    if (msg.chart_config) {
+      setChartConfig(msg.chart_config);
+      if (msg.chart_config.data && msg.chart_config.data.length > 0) {
+        setTableData(msg.chart_config.data);
+      }
+    }
+    if (msg.sql_query) {
+      setSqlQuery(msg.sql_query);
+    }
+    if (msg.execution_time_ms !== undefined) {
+      setExecutionTimeMs(msg.execution_time_ms);
+    }
+    if (msg.is_healed !== undefined) {
+      setIsHealed(msg.is_healed);
+    }
+    if (msg.healing_attempts !== undefined) {
+      setHealingAttempts(msg.healing_attempts);
+    }
+    if (msg.failed_queries) {
+      setFailedQueries(msg.failed_queries);
+    }
+    if (msg.text) {
+      setLatestAiExplanation(msg.text);
     }
   };
 
@@ -324,6 +380,8 @@ export const App: React.FC = () => {
         onSendMessage={handleSendMessage}
         geminiApiKey={geminiApiKey}
         onApiKeyChange={handleApiKeyChange}
+        onClearMemory={handleClearMemory}
+        onLoadOnCanvas={handleLoadOnCanvas}
       />
 
       {/* Modal: Live SQL Database Connection (Phase 2) */}

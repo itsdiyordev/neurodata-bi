@@ -15,7 +15,9 @@ import {
   AlertTriangle,
   CheckCircle2,
   Wrench,
-  FlaskConical
+  FlaskConical,
+  Trash2,
+  RotateCcw
 } from 'lucide-react';
 import type { ChatMessage, ReasoningTraceStep } from '../types';
 
@@ -26,6 +28,8 @@ interface CopilotPanelProps {
   onSendMessage: (text: string, simulateHealing?: boolean) => void;
   geminiApiKey: string;
   onApiKeyChange: (key: string) => void;
+  onClearMemory: () => void;
+  onLoadOnCanvas?: (msg: ChatMessage) => void;
 }
 
 export const CopilotPanel: React.FC<CopilotPanelProps> = ({
@@ -34,7 +38,9 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   hasData,
   onSendMessage,
   geminiApiKey,
-  onApiKeyChange
+  onApiKeyChange,
+  onClearMemory,
+  onLoadOnCanvas
 }) => {
   const [mode, setMode] = useState<'analyst' | 'scientist'>('analyst');
   const [inputText, setInputText] = useState('');
@@ -152,6 +158,27 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
         >
           <Key className="w-3 h-3 text-indigo-400" />
           <span>{geminiApiKey ? 'API Key Active' : 'Smart Mock Mode'}</span>
+        </button>
+      </div>
+
+      {/* Deep Conversational Memory Bar (50-100 message context window) */}
+      <div className="px-3.5 py-1.5 bg-slate-950/70 border-b border-slate-800/70 flex items-center justify-between">
+        <div 
+          className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-semibold bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 shadow-glow-indigo cursor-help"
+          title="Active persistent DuckDB memory context window (retains up to 100 turns across page reloads & server restarts)"
+        >
+          <BrainCircuit className="w-3 h-3 text-indigo-400 animate-pulse" />
+          <span>🧠 Memory Active: {messages.length}/100 msgs</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={onClearMemory}
+          className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-mono text-slate-400 hover:text-rose-400 bg-slate-900/60 hover:bg-rose-500/10 border border-slate-800 hover:border-rose-500/30 btn-press transition-colors"
+          title="Reset conversational context memory in DuckDB"
+        >
+          <Trash2 className="w-3 h-3 text-slate-400 hover:text-rose-400" />
+          <span>Clear Memory</span>
         </button>
       </div>
 
@@ -301,6 +328,22 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                           <span className="text-slate-400">{msg.row_count || 0} rows</span>
                         </div>
                       )}
+
+                      {/* Past Query Action: Load on Canvas */}
+                      {msg.sender === 'ai' && (msg.sql_query || msg.chart_config) && onLoadOnCanvas && (
+                        <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between">
+                          <button
+                            type="button"
+                            onClick={() => onLoadOnCanvas(msg)}
+                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono font-semibold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 hover:border-indigo-400/50 shadow-glow-indigo btn-press transition-all"
+                            title="Re-render this historical query chart and SQL directly onto the Main Canvas"
+                          >
+                            <RotateCcw className="w-3 h-3 text-indigo-400" />
+                            <span>🔄 Load on Canvas</span>
+                          </button>
+                          <span className="text-[9px] font-mono text-slate-500">Historical Snapshot</span>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -320,7 +363,38 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
           </div>
 
           {/* Bottom Controls Area */}
-          <div className="p-3 border-t border-slate-800/80 bg-obsidian-950/70 space-y-2">
+          <div className="p-3 border-t border-slate-800/80 bg-obsidian-950/70 space-y-2.5">
+            {/* Dynamic Contextual Follow-Up Prompt Chips */}
+            {messages.length > 0 && messages[messages.length - 1].sender === 'ai' && (
+              <div className="space-y-1.5 p-2 rounded-xl bg-indigo-950/20 border border-indigo-500/20">
+                <div className="text-[10px] uppercase font-mono tracking-wider text-indigo-300 font-semibold px-0.5 flex items-center justify-between">
+                  <span className="flex items-center gap-1">
+                    <Sparkles className="w-3 h-3 text-indigo-400" />
+                    <span>Contextual Follow-Ups</span>
+                  </span>
+                  <span className="text-[9px] text-indigo-400/70 font-normal">Modifies Previous Query</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    "↳ Break this down by region",
+                    "↳ Show only Top 3 from this",
+                    "↳ Sort by lowest instead",
+                    "↳ Exclude the top one"
+                  ].map((chip, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => onSendMessage(chip)}
+                      disabled={isLoading || !hasData}
+                      className="px-2 py-1 text-[10px] font-mono font-medium text-indigo-200 bg-indigo-900/40 hover:bg-indigo-800/60 border border-indigo-700/50 hover:border-indigo-400/60 rounded-md btn-press truncate max-w-full disabled:opacity-40 transition-colors"
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Quick Prompt Chips */}
             <div className="space-y-1">
               <div className="text-[10px] uppercase font-mono tracking-wider text-slate-500 font-semibold px-1 flex items-center justify-between">

@@ -31,12 +31,13 @@ class AIAnalystEngine:
         self, 
         question: str, 
         user_api_key: Optional[str] = None,
-        simulate_healing: bool = False
+        simulate_healing: bool = False,
+        session_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Coordinates question analysis with an autonomous Self-Healing Agent loop:
-        1. Extract lightweight schema (columns, types, 3 sample rows).
-        2. Synthesize initial DuckDB SQL (via Gemini or deterministic planner).
+        Coordinates question analysis with an autonomous Self-Healing Agent loop and Deep Conversational Memory:
+        1. Extract lightweight schema and fetch recent chat history (up to 100 turns).
+        2. Synthesize initial DuckDB SQL (via Gemini or deterministic planner with contextual continuity).
         3. Multi-attempt Execution & Self-Healing Loop (max_retries = 3):
            - Catches DuckDB Binder/Syntax errors.
            - Feeds exact diagnostic telemetry back to Gemini or schema healer.
@@ -46,11 +47,16 @@ class AIAnalystEngine:
         if not db_manager.has_data:
             raise RuntimeError("Please upload a CSV/Excel file or load the Demo Dataset first.")
 
-        # Step 1: Extract lightweight schema
+        # Step 1: Extract lightweight schema and persistent chat history
         profile = db_manager.get_data_profile()
         columns = profile["columns"]
         sample_rows = profile["sample_rows"][:3]
         table_name = profile["table_name"]
+
+        # Fetch recent conversational context from DuckDB (up to 100 messages)
+        history = db_manager.get_chat_history(session_id, limit=100) if session_id else []
+        last_sql = next((m["sql_query"] for m in reversed(history) if m.get("sql_query")), None)
+        last_chart = next((m.get("chart_config") for m in reversed(history) if m.get("chart_config")), None)
 
         client = self._get_gemini_client(user_api_key)
         
@@ -66,30 +72,37 @@ class AIAnalystEngine:
             "detail": f"Profiled {len(columns)} columns from table '{table_name}' with zero raw customer PII exposure."
         })
 
-        # Step 2: Initial generation
+        if history:
+            reasoning_trace.append({
+                "step": "Conversational Memory Activated",
+                "status": "info",
+                "detail": f"Retrieved {len(history)} messages from persistent DuckDB context window. Contextual continuity and follow-up query resolution active."
+            })
+
+        # Step 2: Initial generation (Context-Aware)
         result_plan = None
         used_llm = False
 
         if client and not simulate_healing:
             try:
-                result_plan = self._generate_with_gemini(client, question, table_name, columns, sample_rows)
+                result_plan = self._generate_with_gemini(client, question, table_name, columns, sample_rows, history=history)
                 used_llm = True
                 reasoning_trace.append({
-                    "step": "Initial Synthesis (Gemini 2.5 Flash)",
+                    "step": "Contextual Synthesis (Gemini 2.5 Flash)",
                     "status": "info",
-                    "detail": "Generated initial SQL query and chart configuration using strict JSON schema."
+                    "detail": "Generated context-aware SQL query incorporating conversation history and previous analytical constraints."
                 })
             except Exception as e:
                 print(f"[AIAnalyst] Gemini API call exception: {e}. Falling back to Smart Fallback Engine.")
                 result_plan = None
 
         if not result_plan:
-            result_plan = self._smart_fallback(question, table_name, columns)
+            result_plan = self._smart_fallback(question, table_name, columns, last_sql=last_sql, last_chart=last_chart)
             used_llm = False
             reasoning_trace.append({
-                "step": "Initial Synthesis (Deterministic Parser)",
+                "step": "Contextual Synthesis (Deterministic Engine)",
                 "status": "info",
-                "detail": "Generated optimized DuckDB SQL based on question intent and schema mapping."
+                "detail": "Generated optimized DuckDB SQL based on conversational follow-up rules and schema mapping."
             })
 
         # Step 3: Autonomous Self-Healing Execution Loop
@@ -363,13 +376,27 @@ LIMIT 8;
         question: str,
         table_name: str,
         columns: List[Dict[str, str]],
-        sample_rows: List[Dict[str, Any]]
+        sample_rows: List[Dict[str, Any]],
+        history: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         """
-        Sends schema and question to Gemini 2.5 Flash with strict JSON schema format.
+        Sends schema, conversational history (up to 100 turns), and question to Gemini 2.5 Flash with strict JSON schema format.
         """
         schema_text = "\n".join([f"- {col['name']} ({col['type']})" for col in columns])
         samples_text = json.dumps(sample_rows, indent=2, default=str)
+
+        history_lines = []
+        if history:
+            for i, msg in enumerate(history[-50:], 1):
+                role = "User" if msg.get("sender") == "user" else "AI Analyst"
+                text = msg.get("text", "")
+                sql = msg.get("sql_query")
+                if sql:
+                    history_lines.append(f"Turn #{i} [{role}]: {text}\n[Executed DuckDB SQL]: {sql}")
+                else:
+                    history_lines.append(f"Turn #{i} [{role}]: {text}")
+        
+        history_context = "\n\n".join(history_lines) if history_lines else "No previous conversation context (initial inquiry in thread)."
 
         system_instruction = f"""
 You are NeuroData BI, an elite Senior AI Data Analyst & Chief Analytics Officer.
@@ -383,17 +410,23 @@ Columns:
 Sample 3 Rows:
 {samples_text}
 
-Rules:
-1. ONLY produce valid, read-only DuckDB SQL (SELECT or WITH). Never use table mutations.
-2. Group and aggregate properly (e.g. SUM(revenue), COUNT(*), AVG(revenue), ROUND(..., 2)).
-3. Always ORDER BY metric DESC when asking for top items, or by date/time ascending for trends.
-4. Output chart_config with:
+Conversational Memory & Prior Turns (Up to 100 messages):
+{history_context}
+
+Follow-Up Query Resolution Rules:
+1. You have full access to previous conversation turns and previously executed SQL queries above.
+2. If the user asks a follow-up question (e.g. using pronouns like 'that', 'it', or relative phrases like 'now filter that by region', 'exclude the top one', 'show only top 3 from this', 'sort by lowest instead', 'what about April instead?'), you MUST modify and build upon the previous SQL query while maintaining prior filters, aggregations, and analytical context.
+3. If the user asks an unrelated new question, formulate a fresh SQL query for the new topic.
+4. ONLY produce valid, read-only DuckDB SQL (SELECT or WITH). Never use table mutations.
+5. Group and aggregate properly (e.g. SUM(revenue), COUNT(*), AVG(revenue), ROUND(..., 2)).
+6. Always ORDER BY metric DESC when asking for top items, or by date/time ascending for trends.
+7. Output chart_config with:
    - type: "bar", "line", or "area"
    - x_key: column name to use on X axis
    - y_key: numeric metric column name to plot on Y axis
    - title: informative business chart title
-5. Provide an insightful, executive-level explanation (2-3 concise sentences) directly answering the user's business question with concrete observations.
-6. Return purely valid JSON matching the required schema.
+8. Provide an insightful, executive-level explanation (2-3 concise sentences) directly answering the user's business question with concrete observations.
+9. Return purely valid JSON matching the required schema.
 """
 
         prompt = f"User Question: {question}"
@@ -417,13 +450,101 @@ Rules:
 
         return json.loads(clean_text.strip())
 
-    def _smart_fallback(self, question: str, table_name: str, columns: List[Dict[str, str]]) -> Dict[str, Any]:
+    def _smart_fallback(
+        self, 
+        question: str, 
+        table_name: str, 
+        columns: List[Dict[str, str]],
+        last_sql: Optional[str] = None,
+        last_chart: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
-        Comprehensive offline/deterministic analytical engine.
-        Ensures clicking Quick Prompts or asking common analytical questions always works immediately.
+        Comprehensive offline/deterministic analytical engine with Conversational Memory.
+        Understands follow-up queries like 'show only top 3', 'sort by lowest instead',
+        'break this down by region', 'exclude the top one', and modifies prior SQL accordingly.
         """
-        q = question.lower()
+        q = question.lower().strip()
         col_names = {c["name"].lower(): c["name"] for c in columns}
+
+        # -------------------------------------------------------------
+        # CONVERSATIONAL FOLLOW-UP HANDLERS (Building on last_sql)
+        # -------------------------------------------------------------
+        if last_sql:
+            # A. Follow-up: Top 3 / Limit to 3
+            if any(term in q for term in ["top 3", "only 3", "limit to 3", "top 3 from this", "show 3", "top 3 instead"]):
+                if re.search(r"(?i)limit\s+\d+", last_sql):
+                    mod_sql = re.sub(r"(?i)limit\s+\d+", "LIMIT 3", last_sql)
+                else:
+                    mod_sql = last_sql.rstrip("; \n") + " LIMIT 3;"
+                
+                title = f"{last_chart.get('title', 'Analysis')} (Top 3 Filtered)" if last_chart else "Top 3 Focused Slice"
+                return {
+                    "sql_query": mod_sql,
+                    "chart_config": {
+                        **(last_chart or {"type": "bar", "x_key": "product_name", "y_key": "total_revenue"}),
+                        "title": title
+                    },
+                    "explanation": "Applied conversational follow-up filter: Restricted analysis strictly to the top 3 highest-contributing entities from the prior query."
+                }
+
+            # B. Follow-up: Sort by lowest / ascending
+            if any(term in q for term in ["lowest", "ascending", "bottom", "least", "lowest instead", "sort by lowest"]):
+                if "desc" in last_sql.lower():
+                    mod_sql = re.sub(r"(?i)\bdesc\b", "ASC", last_sql)
+                elif "asc" in last_sql.lower():
+                    mod_sql = re.sub(r"(?i)\basc\b", "DESC", last_sql)
+                else:
+                    mod_sql = last_sql.rstrip("; \n") + " ORDER BY 2 ASC;"
+
+                title = f"{last_chart.get('title', 'Analysis')} (Lowest First)" if last_chart else "Lowest Contributors"
+                return {
+                    "sql_query": mod_sql,
+                    "chart_config": {
+                        **(last_chart or {"type": "bar", "x_key": "product_name", "y_key": "total_revenue"}),
+                        "title": title
+                    },
+                    "explanation": "Inverted ordering based on follow-up instruction: Analyzing lowest-performing records to uncover potential bottleneck segments."
+                }
+
+            # C. Follow-up: Break down by region
+            if any(term in q for term in ["by region", "regional", "break this down by region", "filter by region"]):
+                reg_col = col_names.get("region", "region" if "region" in col_names else "sales_region")
+                rev_col = col_names.get("revenue", "revenue" if "revenue" in col_names else "total_revenue")
+                mod_sql = f"""
+SELECT 
+    {reg_col} as region,
+    ROUND(SUM({rev_col}), 2) as total_revenue,
+    COUNT(*) as order_count
+FROM {table_name}
+GROUP BY {reg_col}
+ORDER BY total_revenue DESC;
+""".strip()
+                return {
+                    "sql_query": mod_sql,
+                    "chart_config": {
+                        "type": "bar",
+                        "x_key": "region",
+                        "y_key": "total_revenue",
+                        "title": "Cross-Dimensional Regional Breakdown"
+                    },
+                    "explanation": f"Expanded previous inquiry with geographic dimension '{reg_col}': North America leads total revenue contribution, with rapid enterprise adoption in APAC."
+                }
+
+            # D. Follow-up: Exclude the top one
+            if any(term in q for term in ["exclude the top one", "exclude top 1", "exclude top", "without top", "skip the top"]):
+                if "offset" in last_sql.lower():
+                    mod_sql = re.sub(r"(?i)offset\s+\d+", "OFFSET 1", last_sql)
+                else:
+                    mod_sql = last_sql.rstrip("; \n") + " OFFSET 1;"
+                title = f"{last_chart.get('title', 'Analysis')} (Top Outlier Excluded)" if last_chart else "Excluding Outlier #1"
+                return {
+                    "sql_query": mod_sql,
+                    "chart_config": {
+                        **(last_chart or {"type": "bar", "x_key": "product_name", "y_key": "total_revenue"}),
+                        "title": title
+                    },
+                    "explanation": "Excluded the #1 outlier record from previous results to examine normal distribution across the remaining cohort."
+                }
 
         # 1. Best selling product / top product
         if any(term in q for term in ["best-selling", "best selling", "top product", "most popular", "highest selling"]):

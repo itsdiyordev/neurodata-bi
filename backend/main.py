@@ -40,6 +40,7 @@ app.add_middleware(
 
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=1000, description="Analytical natural language question")
+    session_id: Optional[str] = Field(None, description="Active session ID for persistent conversational memory")
     gemini_api_key: Optional[str] = Field(None, description="Optional user Gemini API Key")
     simulate_healing: Optional[bool] = Field(False, description="Simulate an intentional query failure to demonstrate the self-healing agent loop")
 
@@ -54,7 +55,7 @@ def health_check():
         "service": "NeuroData BI Analytics Engine",
         "has_dataset_loaded": db_manager.has_data,
         "active_session_id": db_manager.active_session_id,
-        "engine": "DuckDB (Persistent Storage) + Gemini 2.5 Flash + Smart Data Sanitizer"
+        "engine": "DuckDB (Persistent Storage) + Gemini 2.5 Flash + Smart Data Sanitizer + Conversational Memory"
     }
 
 @app.get("/api/session/restore")
@@ -63,8 +64,8 @@ def restore_session(
     x_session_id: Optional[str] = Header(None)
 ):
     """
-    Restores the last loaded dataset, schema profile, KPIs, and cleaning report
-    from persistent DuckDB storage so page refresh retains active state without data loss.
+    Restores the last loaded dataset, schema profile, KPIs, cleaning report,
+    and persistent chat history (up to 100 messages) from DuckDB storage.
     """
     sid = session_id or x_session_id
     restored = db_manager.restore_session(sid)
@@ -80,7 +81,8 @@ def restore_session(
         "session_id": restored["session_id"],
         "original_filename": restored.get("original_filename", ""),
         "profile": restored["profile"],
-        "cleaning_report": restored["cleaning_report"]
+        "cleaning_report": restored["cleaning_report"],
+        "chat_history": restored.get("chat_history", [])
     }
 
 @app.post("/api/demo")
@@ -172,11 +174,16 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
 @app.post("/api/ask")
-def ask_question(payload: AskRequest):
+def ask_question(
+    payload: AskRequest,
+    x_session_id: Optional[str] = Header(None)
+):
     """
-    Analyzes user question, generates DuckDB SQL via Gemini 2.5 Flash
-    (or smart deterministic fallback parser), executes query in DuckDB, and returns
-    SQL, chart config, explanation, and AI reasoning steps.
+    Analyzes user question with Deep Conversational Memory (up to 100 turns):
+    - Retrieves prior conversation context and executed SQL.
+    - Generates context-aware DuckDB SQL via Gemini 2.5 Flash or Smart Fallback engine.
+    - Runs autonomous Self-Healing loop if DuckDB runtime errors occur.
+    - Automatically persists both user question and AI answer to DuckDB chat_history.
     """
     if not db_manager.has_data:
         raise HTTPException(
@@ -184,17 +191,80 @@ def ask_question(payload: AskRequest):
             detail="No dataset loaded. Please upload a CSV/Excel file or launch Demo Dataset first."
         )
 
+    sid = payload.session_id or x_session_id or db_manager.active_session_id or "default_session"
+
+    # Save user message to persistent DuckDB history
+    user_msg_id = db_manager.save_chat_message(
+        session_id=sid,
+        role="user",
+        content=payload.question
+    )
+
     try:
         analysis = ai_analyst.analyze_question(
             question=payload.question,
             user_api_key=payload.gemini_api_key,
-            simulate_healing=bool(payload.simulate_healing)
+            simulate_healing=bool(payload.simulate_healing),
+            session_id=sid
         )
+
+        # Save assistant message to persistent DuckDB history
+        ai_msg_id = db_manager.save_chat_message(
+            session_id=sid,
+            role="assistant",
+            content=analysis.get("explanation", ""),
+            sql_query=analysis.get("sql_query"),
+            chart_config=analysis.get("chart_config"),
+            reasoning_trace=analysis.get("reasoning_trace"),
+            healing_attempts=analysis.get("healing_attempts", 0),
+            failed_queries=analysis.get("failed_queries"),
+            is_healed=bool(analysis.get("is_healed")),
+            engine=analysis.get("engine")
+        )
+
+        analysis["user_message_id"] = user_msg_id
+        analysis["ai_message_id"] = ai_msg_id
+        analysis["session_id"] = sid
         return analysis
+
     except ValueError as val_err:
         raise HTTPException(status_code=400, detail=str(val_err))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+@app.delete("/api/chat/clear")
+def clear_chat_history(
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """
+    Deletes all persistent chat history for the active session, resetting the memory window.
+    """
+    sid = session_id or x_session_id or db_manager.active_session_id or "default_session"
+    deleted_count = db_manager.clear_chat_history(sid)
+    return {
+        "success": True,
+        "session_id": sid,
+        "deleted_count": deleted_count,
+        "message": f"Successfully cleared {deleted_count} messages from conversation memory."
+    }
+
+@app.get("/api/chat/history")
+def get_chat_history(
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None),
+    limit: int = 100
+):
+    """
+    Retrieves the last `limit` messages (up to 100) from persistent DuckDB chat history.
+    """
+    sid = session_id or x_session_id or db_manager.active_session_id or "default_session"
+    messages = db_manager.get_chat_history(sid, limit=limit)
+    return {
+        "session_id": sid,
+        "count": len(messages),
+        "messages": messages
+    }
 
 @app.post("/api/query")
 def direct_query(payload: QueryRequest):

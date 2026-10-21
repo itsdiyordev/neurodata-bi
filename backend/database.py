@@ -31,7 +31,7 @@ class DuckDBManager:
         self._check_and_restore_latest_session()
 
     def _init_metadata_tables(self) -> None:
-        """Initializes the metadata table tracking session datasets."""
+        """Initializes the metadata table tracking session datasets and chat history."""
         self.con.execute("""
             CREATE TABLE IF NOT EXISTS neurodata_sessions (
                 session_id VARCHAR PRIMARY KEY,
@@ -41,6 +41,22 @@ class DuckDBManager:
                 cleaning_report_json VARCHAR,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        self.con.execute("""
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id VARCHAR PRIMARY KEY,
+                session_id VARCHAR,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                role VARCHAR,
+                content TEXT,
+                sql_query TEXT,
+                chart_config TEXT,
+                reasoning_trace TEXT,
+                healing_attempts INTEGER DEFAULT 0,
+                failed_queries TEXT,
+                is_healed BOOLEAN DEFAULT FALSE,
+                engine VARCHAR
             );
         """)
 
@@ -161,16 +177,166 @@ class DuckDBManager:
             self.active_cleaning_report = report
 
             profile = self.get_data_profile(table_name)
+            chat_history = self.get_chat_history(sid, limit=100)
             return {
                 "restored": True,
                 "session_id": sid,
                 "original_filename": orig_filename,
                 "profile": profile,
-                "cleaning_report": report
+                "cleaning_report": report,
+                "chat_history": chat_history
             }
         except Exception as e:
             print(f"[DuckDBManager] Restore session failed: {e}")
             return None
+
+    def save_chat_message(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        sql_query: Optional[str] = None,
+        chart_config: Optional[Dict[str, Any]] = None,
+        reasoning_trace: Optional[List[Dict[str, Any]]] = None,
+        healing_attempts: int = 0,
+        failed_queries: Optional[List[Dict[str, Any]]] = None,
+        is_healed: bool = False,
+        engine: Optional[str] = None,
+        msg_id: Optional[str] = None
+    ) -> str:
+        """
+        Saves a chat message into persistent DuckDB chat_history and maintains a 100-message rolling window per session.
+        """
+        sid = (session_id or self.active_session_id or "default_session").strip()
+        mid = msg_id or f"msg_{int(time.time() * 1000)}_{role[:2]}"
+        
+        chart_json = json.dumps(chart_config, default=str) if chart_config else None
+        trace_json = json.dumps(reasoning_trace, default=str) if reasoning_trace else None
+        failed_json = json.dumps(failed_queries, default=str) if failed_queries else None
+
+        self.con.execute("""
+            INSERT INTO chat_history 
+            (id, session_id, timestamp, role, content, sql_query, chart_config, reasoning_trace, healing_attempts, failed_queries, is_healed, engine)
+            VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, [
+            mid, sid, role, content, sql_query, chart_json, trace_json, 
+            int(healing_attempts), failed_json, bool(is_healed), engine
+        ])
+
+        # Maintain 100-message rolling window per session
+        try:
+            self.con.execute("""
+                DELETE FROM chat_history 
+                WHERE session_id = ? 
+                AND id NOT IN (
+                    SELECT id FROM chat_history 
+                    WHERE session_id = ? 
+                    ORDER BY timestamp DESC 
+                    LIMIT 100
+                )
+            """, [sid, sid])
+        except Exception as win_err:
+            print(f"[DuckDBManager] Rolling window trim: {win_err}")
+
+        return mid
+
+    def get_chat_history(
+        self, 
+        session_id: Optional[str] = None, 
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieves the last `limit` messages (up to 100) for a given session in chronological order.
+        """
+        sid = session_id or self.active_session_id or "default_session"
+        try:
+            rows = self.con.execute("""
+                SELECT 
+                    id, 
+                    session_id, 
+                    strftime(timestamp, '%H:%M') as time_str,
+                    strftime(timestamp, '%Y-%m-%d %H:%M:%S') as full_ts,
+                    role, 
+                    content, 
+                    sql_query, 
+                    chart_config, 
+                    reasoning_trace, 
+                    healing_attempts, 
+                    failed_queries, 
+                    is_healed, 
+                    engine
+                FROM (
+                    SELECT * FROM chat_history
+                    WHERE session_id = ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                ) sub
+                ORDER BY timestamp ASC
+            """, [sid, limit]).fetchall()
+
+            messages = []
+            for r in rows:
+                mid, r_sid, time_str, full_ts, role, content, sql_q, chart_raw, trace_raw, heal_att, failed_raw, is_h, eng = r
+                
+                chart_cfg = None
+                if chart_raw:
+                    try:
+                        chart_cfg = json.loads(chart_raw)
+                    except Exception:
+                        chart_cfg = None
+
+                trace = None
+                if trace_raw:
+                    try:
+                        trace = json.loads(trace_raw)
+                    except Exception:
+                        trace = None
+
+                failed_q = None
+                if failed_raw:
+                    try:
+                        failed_q = json.loads(failed_raw)
+                    except Exception:
+                        failed_q = None
+
+                messages.append({
+                    "id": mid,
+                    "sender": "user" if role == "user" else "ai",
+                    "text": content,
+                    "timestamp": time_str or "Just now",
+                    "full_timestamp": full_ts,
+                    "sql_query": sql_q,
+                    "chart_config": chart_cfg,
+                    "reasoning_trace": trace,
+                    "reasoning_steps": [f"{s['step']}: {s['detail']}" for s in trace] if trace else None,
+                    "healing_attempts": heal_att or 0,
+                    "failed_queries": failed_q,
+                    "is_healed": bool(is_h),
+                    "engine": eng
+                })
+            return messages
+        except Exception as e:
+            print(f"[DuckDBManager] Failed to fetch chat history: {e}")
+            return []
+
+    def clear_chat_history(self, session_id: Optional[str] = None) -> int:
+        """
+        Deletes all chat messages for the specified session_id. Returns number of rows deleted.
+        """
+        sid = session_id or self.active_session_id or "default_session"
+        try:
+            count = self.con.execute(
+                "SELECT COUNT(*) FROM chat_history WHERE session_id = ?", 
+                [sid]
+            ).fetchone()[0]
+            self.con.execute(
+                "DELETE FROM chat_history WHERE session_id = ?", 
+                [sid]
+            )
+            return count
+        except Exception as e:
+            print(f"[DuckDBManager] Clear chat history error: {e}")
+            return 0
 
     def get_data_profile(self, target_table: Optional[str] = None) -> Dict[str, Any]:
         """
