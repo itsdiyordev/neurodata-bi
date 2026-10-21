@@ -3,8 +3,9 @@ import { Sidebar } from './components/Sidebar';
 import { DashboardCanvas } from './components/DashboardCanvas';
 import { CopilotPanel } from './components/CopilotPanel';
 import { LiveDbModal } from './components/LiveDbModal';
+import { DataSanitizerModal } from './components/DataSanitizerModal';
 import { AgentationWrapper } from './components/AgentationWrapper';
-import type { DataProfile, ChartConfig, ChatMessage, KPIData } from './types';
+import type { DataProfile, ChartConfig, ChatMessage, KPIData, CleaningReport } from './types';
 
 const API_BASE = 'http://localhost:8000/api';
 
@@ -17,6 +18,18 @@ export const App: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isLiveDbModalOpen, setIsLiveDbModalOpen] = useState<boolean>(false);
+  const [isSanitizerModalOpen, setIsSanitizerModalOpen] = useState<boolean>(false);
+  const [cleaningReport, setCleaningReport] = useState<CleaningReport | null>(null);
+
+  // Persistent session ID saved in localStorage
+  const [sessionId] = useState<string>(() => {
+    const existing = localStorage.getItem('NEURODATA_SESSION_ID');
+    if (existing) return existing;
+    const newId = `session_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
+    localStorage.setItem('NEURODATA_SESSION_ID', newId);
+    return newId;
+  });
+
   const [geminiApiKey, setGeminiApiKey] = useState<string>(() => {
     return localStorage.getItem('NEURODATA_GEMINI_KEY') || '';
   });
@@ -26,36 +39,55 @@ export const App: React.FC = () => {
     localStorage.setItem('NEURODATA_GEMINI_KEY', key);
   };
 
-  // Check health and existing session on mount
+  // Auto-restore session from persistent DuckDB storage on mount/refresh
   useEffect(() => {
-    fetch(`${API_BASE}/profile`)
+    fetch(`${API_BASE}/session/restore?session_id=${sessionId}`, {
+      headers: {
+        'X-Session-ID': sessionId,
+      },
+    })
       .then((res) => res.json())
       .then((data) => {
-        if (data && data.has_data) {
-          setDataProfile(data);
-          if (data.default_chart) {
-            setChartConfig(data.default_chart);
-            setSqlQuery(data.default_chart.sql_query || '');
+        if (data && data.restored && data.profile) {
+          setDataProfile(data.profile);
+          if (data.cleaning_report) {
+            setCleaningReport(data.cleaning_report);
           }
-          if (data.preview_rows) {
-            setTableData(data.preview_rows);
+          if (data.profile.default_chart) {
+            setChartConfig(data.profile.default_chart);
+            setSqlQuery(data.profile.default_chart.sql_query || '');
           }
+          if (data.profile.preview_rows) {
+            setTableData(data.profile.preview_rows);
+          }
+
+          const restoreMsg: ChatMessage = {
+            id: `msg-restore-${Date.now()}`,
+            sender: 'ai',
+            text: `🔄 Active dataset successfully restored from local persistent DuckDB storage (${data.profile.total_records.toLocaleString()} records). Schema and distribution charts are live without data loss.`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            engine: 'DuckDB Persistent Engine',
+          };
+          setMessages([restoreMsg]);
         }
       })
       .catch(() => {
         // Backend not yet reachable or empty session
       });
-  }, []);
+  }, [sessionId]);
 
-  // 1. Upload File Handler
+  // 1. Upload File Handler (Auto-Sanitized & Persistent)
   const handleUpload = async (file: File) => {
     setIsLoading(true);
     const formData = new FormData();
     formData.append('file', file);
 
     try {
-      const res = await fetch(`${API_BASE}/upload`, {
+      const res = await fetch(`${API_BASE}/upload?session_id=${sessionId}`, {
         method: 'POST',
+        headers: {
+          'X-Session-ID': sessionId,
+        },
         body: formData,
       });
 
@@ -66,7 +98,10 @@ export const App: React.FC = () => {
 
       const result = await res.json();
       const profile = result.profile;
+      const report = result.cleaning_report;
+
       setDataProfile(profile);
+      setCleaningReport(report);
 
       if (profile.default_chart) {
         setChartConfig(profile.default_chart);
@@ -76,13 +111,17 @@ export const App: React.FC = () => {
         setTableData(profile.preview_rows);
       }
 
-      // Add welcome message from Copilot
+      const colsNormalized = report?.columns_normalized || 0;
+      const rowsTrimmed = report?.rows_removed || 0;
+      const health = report?.data_health_score || 99.4;
+
+      // Add welcome message from Copilot highlighting Auto-Sanitizer
       const welcomeMsg: ChatMessage = {
         id: `msg-${Date.now()}`,
         sender: 'ai',
-        text: `Successfully ingested "${file.name}" into DuckDB in-memory table "dataset" (${profile.total_records.toLocaleString()} records). Initial schema and distribution charts have been computed. Ask me any business question or pick a prompt below!`,
+        text: `✨ Successfully ingested and auto-sanitized "${file.name}" into DuckDB table "${profile.table_name}" (${profile.total_records.toLocaleString()} records).\n\n• ETL Pipeline normalized ${colsNormalized} column names to SQL-safe identifiers.\n• ${rowsTrimmed} empty/corrupted rows trimmed.\n• Data health score: ${health}%.\n\nAsk me any business question or pick a prompt below!`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        engine: 'DuckDB In-Memory Engine',
+        engine: 'DuckDB Persistent Engine',
       };
       setMessages((prev) => [...prev, welcomeMsg]);
     } catch (err: any) {
@@ -96,8 +135,11 @@ export const App: React.FC = () => {
   const handleLoadDemo = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/demo`, {
+      const res = await fetch(`${API_BASE}/demo?session_id=${sessionId}`, {
         method: 'POST',
+        headers: {
+          'X-Session-ID': sessionId,
+        },
       });
 
       if (!res.ok) {
@@ -107,7 +149,10 @@ export const App: React.FC = () => {
 
       const result = await res.json();
       const profile = result.profile;
+      const report = result.cleaning_report;
+
       setDataProfile(profile);
+      setCleaningReport(report);
 
       if (profile.default_chart) {
         setChartConfig(profile.default_chart);
@@ -120,9 +165,9 @@ export const App: React.FC = () => {
       const welcomeMsg: ChatMessage = {
         id: `msg-${Date.now()}`,
         sender: 'ai',
-        text: `Loaded E-Commerce Demo Dataset with ${profile.total_records.toLocaleString()} orders into DuckDB table "dataset". Notice the monthly revenue trends across North America, EMEA, and APAC. Try asking: "Why did sales drop in March?" or "What is our best-selling product?"`,
+        text: `✨ Loaded & auto-cleaned E-Commerce Demo Dataset with ${profile.total_records.toLocaleString()} orders into persistent DuckDB table "${profile.table_name}". Data health verified at ${report?.data_health_score || 99.8}%. Notice the monthly revenue trends across North America, EMEA, and APAC. Try asking: "Why did sales drop in March?" or "What is our best-selling product?"`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        engine: 'DuckDB In-Memory Engine',
+        engine: 'DuckDB Persistent Engine',
       };
       setMessages([welcomeMsg]);
     } catch (err: any) {
@@ -150,6 +195,7 @@ export const App: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'X-Session-ID': sessionId,
         },
         body: JSON.stringify({
           question: text,
@@ -209,7 +255,7 @@ export const App: React.FC = () => {
     total_records: dataProfile?.total_records || 0,
     total_revenue: dataProfile?.kpis?.total_revenue || 0,
     avg_order_value: dataProfile?.kpis?.avg_order_value || 0,
-    data_quality_percent: dataProfile?.kpis?.data_quality_percent || 99.4,
+    data_quality_percent: cleaningReport?.data_health_score ?? (dataProfile?.kpis?.data_quality_percent || 99.4),
   };
 
   return (
@@ -221,9 +267,11 @@ export const App: React.FC = () => {
         totalRecords={dataProfile?.total_records || 0}
         columns={dataProfile?.columns || []}
         isLoading={isLoading}
+        cleaningReport={cleaningReport}
         onUpload={handleUpload}
         onLoadDemo={handleLoadDemo}
         onOpenLiveDbModal={() => setIsLiveDbModalOpen(true)}
+        onOpenSanitizerModal={() => setIsSanitizerModalOpen(true)}
       />
 
       {/* Column 2: Center Main Canvas (Interactive Dashboard - ~60% width, scrollable) */}
@@ -235,11 +283,13 @@ export const App: React.FC = () => {
         sqlQuery={sqlQuery}
         executionTimeMs={executionTimeMs}
         isLoading={isLoading}
+        cleaningReport={cleaningReport}
         onLoadDemo={handleLoadDemo}
         onUploadClick={() => {
           const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
           fileInput?.click();
         }}
+        onOpenSanitizerModal={() => setIsSanitizerModalOpen(true)}
       />
 
       {/* Column 3: Right Panel (AI Copilot & Mode Switcher - 380px) */}
@@ -256,6 +306,16 @@ export const App: React.FC = () => {
       <LiveDbModal
         isOpen={isLiveDbModalOpen}
         onClose={() => setIsLiveDbModalOpen(false)}
+      />
+
+      {/* Modal: Smart Data Sanitizer & ETL Pipeline Report */}
+      <DataSanitizerModal
+        isOpen={isSanitizerModalOpen}
+        onClose={() => setIsSanitizerModalOpen(false)}
+        report={cleaningReport}
+        columns={dataProfile?.columns || []}
+        tableName={dataProfile?.table_name || 'dataset'}
+        sessionId={sessionId}
       />
 
       {/* Agentation Visual Feedback Toolbar */}

@@ -75,7 +75,7 @@ class AIAnalystEngine:
         reasoning_steps = [
             f"1. Profiled schema for table '{table_name}' with {len(columns)} columns (types: {', '.join(c['name'] for c in columns[:4])}...)",
             f"2. Synthesized DuckDB analytical query using { 'Gemini 2.5 Flash' if used_llm else 'Smart Analytical Parser' }",
-            f"3. In-memory DuckDB query executed in {query_execution['execution_time_ms']} ms ({query_execution['row_count']} rows returned)",
+            f"3. DuckDB analytical query executed in {query_execution['execution_time_ms']} ms ({query_execution['row_count']} rows returned)",
             f"4. Rendered interactive visualization: {result_plan.get('chart_config', {}).get('type', 'bar').upper()} chart with X-axis '{result_plan.get('chart_config', {}).get('x_key', 'x')}'"
         ]
 

@@ -2,13 +2,14 @@ import os
 import io
 import shutil
 from typing import Optional
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import pandas as pd
 from dotenv import load_dotenv
 
 from database import db_manager
+from sanitizer import DataSanitizer
 from demo_data import generate_demo_dataset
 from ai_analyst import ai_analyst
 
@@ -16,8 +17,8 @@ load_dotenv()
 
 app = FastAPI(
     title="NeuroData BI Engine",
-    description="High-performance in-memory DuckDB analytical engine with Gemini 2.5 Flash copilot",
-    version="1.0.0"
+    description="High-performance persistent DuckDB analytical engine with Smart Data Sanitizer and Gemini Copilot",
+    version="1.1.0"
 )
 
 # CORS Configuration for local frontend development
@@ -49,31 +50,74 @@ def health_check():
         "status": "healthy",
         "service": "NeuroData BI Analytics Engine",
         "has_dataset_loaded": db_manager.has_data,
-        "engine": "DuckDB (In-Memory) + Gemini 2.5 Flash"
+        "active_session_id": db_manager.active_session_id,
+        "engine": "DuckDB (Persistent Storage) + Gemini 2.5 Flash + Smart Data Sanitizer"
+    }
+
+@app.get("/api/session/restore")
+def restore_session(
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """
+    Restores the last loaded dataset, schema profile, KPIs, and cleaning report
+    from persistent DuckDB storage so page refresh retains active state without data loss.
+    """
+    sid = session_id or x_session_id
+    restored = db_manager.restore_session(sid)
+    if not restored:
+        return {
+            "success": False,
+            "restored": False,
+            "message": "No active dataset found in persistent storage. Please load demo data or upload a file."
+        }
+    return {
+        "success": True,
+        "restored": True,
+        "session_id": restored["session_id"],
+        "original_filename": restored.get("original_filename", ""),
+        "profile": restored["profile"],
+        "cleaning_report": restored["cleaning_report"]
     }
 
 @app.post("/api/demo")
-def load_demo():
+def load_demo(
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None)
+):
     """
-    Generates a 380+ row realistic B2B/B2C E-commerce dataset,
-    loads it into DuckDB table 'dataset', and returns full data profiling.
+    Generates realistic B2B/B2C E-commerce dataset, sanitizes it via DataSanitizer,
+    loads it into persistent DuckDB, and returns full data profiling + cleaning report.
     """
     try:
-        df = generate_demo_dataset()
-        profile = db_manager.reset_and_load_dataframe(df)
+        sid = session_id or x_session_id or "demo_session"
+        raw_df = generate_demo_dataset()
+        clean_df, cleaning_report = DataSanitizer.sanitize(raw_df, original_filename="ecommerce_demo_sales.csv")
+        profile = db_manager.load_dataset(
+            df=clean_df, 
+            session_id=sid, 
+            original_filename="ecommerce_demo_sales.csv",
+            cleaning_report=cleaning_report
+        )
         return {
             "success": True,
-            "message": "Demo E-Commerce dataset loaded successfully into DuckDB (table: dataset).",
-            "profile": profile
+            "message": "Demo E-Commerce dataset loaded and auto-cleaned successfully.",
+            "profile": profile,
+            "cleaning_report": cleaning_report
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load demo dataset: {str(e)}")
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None)
+):
     """
-    Accepts CSV or Excel spreadsheet, loads it into DuckDB table 'dataset',
-    profiles the schema, calculates KPIs, and generates initial overview visualization.
+    Accepts CSV or Excel spreadsheet, cleans it through Smart Data Sanitizer
+    (header detection, snake_case normalization, currency/date coercion),
+    and stores it persistently into DuckDB.
     """
     filename = (file.filename or "").lower()
     if not (filename.endswith(".csv") or filename.endswith(".xlsx") or filename.endswith(".xls")):
@@ -84,40 +128,50 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         contents = await file.read()
-        if len(contents) > 50 * 1024 * 1024: # 50 MB limit
+        if len(contents) > 50 * 1024 * 1024:  # 50 MB limit
             raise HTTPException(status_code=400, detail="File size exceeds maximum 50MB limit.")
 
         if filename.endswith(".csv"):
-            # Attempt UTF-8 with latin-1 fallback
             try:
-                df = pd.read_csv(io.BytesIO(contents), encoding="utf-8")
+                raw_df = pd.read_csv(io.BytesIO(contents), encoding="utf-8")
             except UnicodeDecodeError:
-                df = pd.read_csv(io.BytesIO(contents), encoding="latin-1")
+                raw_df = pd.read_csv(io.BytesIO(contents), encoding="latin-1")
         else:
-            df = pd.read_excel(io.BytesIO(contents))
+            raw_df = pd.read_excel(io.BytesIO(contents))
 
-        # Clean column names (strip whitespace and special characters)
-        df.columns = [str(c).strip().replace(" ", "_").replace("-", "_") for c in df.columns]
+        if raw_df.empty:
+            raise HTTPException(status_code=400, detail="The uploaded file contains no data.")
 
-        if df.empty or len(df.columns) == 0:
-            raise HTTPException(status_code=400, detail="The uploaded file contains no data or columns.")
+        # Execute Auto-Cleaning ETL Pipeline
+        clean_df, cleaning_report = DataSanitizer.sanitize(raw_df, original_filename=file.filename or "")
 
-        profile = db_manager.reset_and_load_dataframe(df)
+        if clean_df.empty or len(clean_df.columns) == 0:
+            raise HTTPException(status_code=400, detail="Unable to extract valid columns from file.")
+
+        sid = session_id or x_session_id or "user_upload_session"
+        profile = db_manager.load_dataset(
+            df=clean_df,
+            session_id=sid,
+            original_filename=file.filename or "upload.csv",
+            cleaning_report=cleaning_report
+        )
+
         return {
             "success": True,
             "filename": file.filename,
-            "message": f"Successfully loaded {len(df)} records into DuckDB.",
-            "profile": profile
+            "message": f"Successfully sanitized and loaded {len(clean_df):,} records into DuckDB.",
+            "profile": profile,
+            "cleaning_report": cleaning_report
         }
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error parsing file: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
 @app.post("/api/ask")
 def ask_question(payload: AskRequest):
     """
-    Analyzes user question, extracts schema, generates DuckDB SQL via Gemini 2.5 Flash
+    Analyzes user question, generates DuckDB SQL via Gemini 2.5 Flash
     (or smart deterministic fallback parser), executes query in DuckDB, and returns
     SQL, chart config, explanation, and AI reasoning steps.
     """

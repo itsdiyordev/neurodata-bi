@@ -29,7 +29,7 @@ import {
   Tooltip, 
   CartesianGrid 
 } from 'recharts';
-import type { KPIData, ChartConfig } from '../types';
+import type { KPIData, ChartConfig, CleaningReport } from '../types';
 
 interface DashboardCanvasProps {
   hasData: boolean;
@@ -39,8 +39,10 @@ interface DashboardCanvasProps {
   sqlQuery: string;
   executionTimeMs: number;
   isLoading: boolean;
+  cleaningReport?: CleaningReport | null;
   onLoadDemo: () => void;
   onUploadClick: () => void;
+  onOpenSanitizerModal?: () => void;
 }
 
 export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
@@ -51,8 +53,10 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
   sqlQuery,
   executionTimeMs,
   isLoading,
+  cleaningReport,
   onLoadDemo,
   onUploadClick,
+  onOpenSanitizerModal,
 }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'sql'>('preview');
   const [chartTypeOverride, setChartTypeOverride] = useState<'bar' | 'line' | 'area' | null>(null);
@@ -236,20 +240,37 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
           </div>
         </div>
 
-        {/* KPI 4: Data Quality */}
-        <div className="glass-panel p-4 rounded-2xl border border-slate-800/80 hover:border-slate-700 transition-colors">
+        {/* KPI 4: Data Quality & Auto-Cleaned ETL */}
+        <div 
+          onClick={onOpenSanitizerModal}
+          className="glass-panel p-4 rounded-2xl border border-slate-800/80 hover:border-emerald-500/40 hover:bg-slate-900/60 transition-all cursor-pointer group shadow-glow-emerald"
+          title="Click to view full AI Data Sanitizer & ETL Pipeline report"
+        >
           <div className="flex items-center justify-between text-slate-400 mb-2">
-            <span className="text-xs font-medium uppercase tracking-wider">Data Quality</span>
-            <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
-              <ShieldCheck className="w-4 h-4" />
+            <span className="text-xs font-medium uppercase tracking-wider group-hover:text-emerald-300 transition-colors">
+              Data Quality
+            </span>
+            <div className="flex items-center gap-1.5">
+              <span className="px-1.5 py-0.5 rounded-full text-[9px] font-mono font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1 group-hover:scale-105 transition-transform">
+                <Sparkles className="w-2.5 h-2.5" />
+                Auto-Cleaned
+              </span>
+              <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400">
+                <ShieldCheck className="w-4 h-4" />
+              </div>
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono text-emerald-400 tabular-nums">
-            {kpis.data_quality_percent}%
+          <div className="text-2xl font-bold font-mono text-emerald-400 tabular-nums flex items-baseline justify-between">
+            <span>{cleaningReport?.data_health_score ?? kpis.data_quality_percent}%</span>
+            <span className="text-[10px] font-sans font-normal text-slate-400 group-hover:text-emerald-400 transition-colors underline decoration-dotted">
+              View ETL Report ➔
+            </span>
           </div>
-          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span>0 corrupt fields</span>
+          <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-1 truncate">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0" />
+            <span className="truncate">
+              {cleaningReport ? `${cleaningReport.columns_normalized} cols normalized • ${cleaningReport.rows_removed} rows trimmed` : 'DuckDB Vectorized Clean'}
+            </span>
           </div>
         </div>
       </div>

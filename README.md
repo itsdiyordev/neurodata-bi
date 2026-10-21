@@ -6,16 +6,18 @@
 
 ## 🚀 Key Features
 
-### 1. In-Memory DuckDB Analytical Engine (`/backend`)
-- **Sub-10ms Analytical Vectorization**: Executes analytical aggregations and group-bys directly in an in-memory DuckDB database session.
-- **Data Profiling & Auto-KPIs**: Ingests `.csv` and `.xlsx` files, extracts schema types (`VARCHAR`, `DOUBLE`, `INTEGER`, `DATE`), calculates missingness/quality health scores (e.g., `99.4%`), and computes real-time business KPIs:
-  - Total Records
-  - Total Revenue
-  - Average Order Value (AOV)
-  - Data Quality Health Score
-- **Realistic 380+ Row Demo Dataset**: Pre-configured with B2B/B2C tech sales data across North America, EMEA, and APAC. Features an intentional supply chain disruption anomaly in March 2024 for immediate executive probing.
+### 1. Persistent DuckDB Analytical Engine & Session Storage (`/backend`)
+- **Persistent Local File Storage**: Stores tables in a local DuckDB file (`backend/data/neurodata_store.duckdb`), preventing data loss across server restarts and browser reloads.
+- **Session Isolation & Auto-Restore**: Generates isolated session tables (`dataset_<session_id>`) with persistent metadata. Features `GET /api/session/restore` to restore the active dataset, KPIs, and charts on page refresh without re-uploading.
+- **Sub-10ms Analytical Vectorization**: Executes analytical aggregations and group-bys directly on vectorized DuckDB column stores.
 
-### 2. Zero Data Exposure LLM Architecture (`backend/ai_analyst.py`)
+### 2. Smart Data Sanitizer (Auto-Cleaning ETL Pipeline) (`backend/sanitizer.py`)
+- **Automated Header Detection**: Detects and trims metadata titles and leading empty rows from messy corporate Excel spreadsheets.
+- **SQL-Safe Column Normalization**: Converts messy column headers to snake_case (`"Total Revenue ($)"` ➔ `total_revenue`), strips forbidden characters, and preserves clean mapping for display.
+- **Smart Type Coercion**: Detects string currencies (`"$1,250.00"`, `"10,500 сум"`, `"45%"`) and dates, auto-coercing them to `DOUBLE`, `INTEGER`, and `DATE` so DuckDB analytical functions (`SUM()`, `AVG()`) run without type errors.
+- **Data Health Scoring**: Calculates an automated data quality score and produces an interactive ETL cleaning report.
+
+### 3. Zero Data Exposure LLM Architecture (`backend/ai_analyst.py`)
 - **Schema-Only Synthesis**: Never passes raw data rows or sensitive customer PII to external LLMs. Only column names, data types, and 3 sample rows are provided to the prompt.
 - **Gemini 2.5 Flash with Strict JSON Schema**: Outputs valid DuckDB SQL, chart configuration, and an executive-level business explanation.
 - **Smart Deterministic Fallback Parser**: Even if `GEMINI_API_KEY` is not provided, the platform seamlessly runs DuckDB analytical queries for demo prompts and queries without failing.

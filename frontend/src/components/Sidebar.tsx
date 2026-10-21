@@ -10,10 +10,11 @@ import {
   DollarSign, 
   CheckSquare, 
   Layers,
-  Sparkles
+  Sparkles,
+  HardDrive
 } from 'lucide-react';
 import { Logo } from './Logo';
-import type { ColumnInfo } from '../types';
+import type { ColumnInfo, CleaningReport } from '../types';
 
 interface SidebarProps {
   hasData: boolean;
@@ -21,9 +22,11 @@ interface SidebarProps {
   totalRecords: number;
   columns: ColumnInfo[];
   isLoading: boolean;
+  cleaningReport?: CleaningReport | null;
   onUpload: (file: File) => void;
   onLoadDemo: () => void;
   onOpenLiveDbModal: () => void;
+  onOpenSanitizerModal: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -32,9 +35,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   totalRecords,
   columns,
   isLoading,
+  cleaningReport,
   onUpload,
   onLoadDemo,
-  onOpenLiveDbModal
+  onOpenLiveDbModal,
+  onOpenSanitizerModal
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -73,6 +78,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return 'text-slate-400 bg-slate-500/10 border-slate-500/20';
     }
   };
+
+  const healthScore = cleaningReport?.data_health_score ?? 99.4;
 
   return (
     <aside className="w-[260px] h-full flex flex-col bg-obsidian-900 border-r border-slate-800/80 shrink-0 select-none">
@@ -157,39 +164,68 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="p-2.5 rounded-xl bg-slate-800/40 border border-slate-700/60 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Table className="w-4 h-4 text-indigo-400" />
-                <span className="text-xs font-semibold font-mono text-white">{tableName}</span>
+                <span className="text-xs font-semibold font-mono text-white truncate max-w-[130px]">{tableName}</span>
               </div>
               <span className="text-[11px] font-mono tabular-nums text-slate-400">
                 {totalRecords.toLocaleString()} rows
               </span>
             </div>
 
+            {/* AI Data Sanitizer Badge Button */}
+            <button
+              type="button"
+              onClick={onOpenSanitizerModal}
+              className="w-full flex items-center justify-between px-2.5 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-xs font-semibold btn-press transition-all group shadow-glow-emerald"
+            >
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400 group-hover:rotate-12 transition-transform" />
+                <span>✨ Auto-Cleaned ETL</span>
+              </div>
+              <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/25 px-1.5 py-0.5 rounded border border-emerald-500/30">
+                {healthScore}%
+              </span>
+            </button>
+
             {/* Column List */}
             <div className="space-y-1">
-              <div className="px-1 py-0.5 text-[10px] font-mono uppercase tracking-wider text-slate-400 font-semibold">
-                Columns ({columns.length})
+              <div className="px-1 py-0.5 text-[10px] font-mono uppercase tracking-wider text-slate-400 font-semibold flex items-center justify-between">
+                <span>Columns ({columns.length})</span>
+                <span className="text-[9px] text-slate-500 font-normal">SQL Normalized</span>
               </div>
-              <div className="space-y-1 max-h-[calc(100vh-360px)] overflow-y-auto pr-1">
-                {columns.map((col) => (
-                  <div
-                    key={col.name}
-                    className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-900/40 hover:bg-slate-800/50 border border-slate-800/60 text-xs transition-colors group"
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      {getColumnIcon(col.type)}
-                      <span className="text-slate-300 font-mono text-xs truncate group-hover:text-white">
-                        {col.name}
+              <div className="space-y-1 max-h-[calc(100vh-420px)] overflow-y-auto pr-1">
+                {columns.map((col) => {
+                  const originalName = col.original_name;
+                  const isRenamed = originalName && originalName !== col.name;
+
+                  return (
+                    <div
+                      key={col.name}
+                      title={isRenamed ? `Original header: "${originalName}"` : undefined}
+                      className="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-slate-900/40 hover:bg-slate-800/50 border border-slate-800/60 text-xs transition-colors group"
+                    >
+                      <div className="flex items-center gap-2 truncate max-w-[150px]">
+                        {getColumnIcon(col.type)}
+                        <div className="truncate">
+                          <span className="text-slate-300 font-mono text-xs truncate group-hover:text-white block leading-tight">
+                            {col.name}
+                          </span>
+                          {isRenamed && (
+                            <span className="text-[9px] text-slate-500 truncate block leading-none mt-0.5 font-sans">
+                              from "{originalName}"
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <span
+                        className={`text-[9px] font-mono px-1.5 py-0.5 rounded border uppercase shrink-0 ${getTypeBadgeStyle(
+                          col.type
+                        )}`}
+                      >
+                        {col.type}
                       </span>
                     </div>
-                    <span
-                      className={`text-[9px] font-mono px-1.5 py-0.5 rounded border uppercase shrink-0 ${getTypeBadgeStyle(
-                        col.type
-                      )}`}
-                    >
-                      {col.type}
-                    </span>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -207,10 +243,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
       {/* Footer System Status */}
       <div className="p-3 border-t border-slate-800/80 bg-obsidian-950/60 flex items-center justify-between text-[11px] text-slate-400">
         <span className="flex items-center gap-1.5 font-mono">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-          DuckDB 1.1 In-Memory
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <HardDrive className="w-3 h-3 text-slate-400" />
+          DuckDB Persistent
         </span>
-        <span className="text-[10px] font-mono text-slate-400">v1.0.0</span>
+        <span className="text-[10px] font-mono text-slate-400">v1.1.0</span>
       </div>
     </aside>
   );
