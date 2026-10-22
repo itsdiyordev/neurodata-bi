@@ -538,6 +538,11 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
             >
               <Code2 className="w-3.5 h-3.5" />
               <span>&lt;/&gt; Generated SQL (DuckDB)</span>
+              {Boolean(sqlQuery && /\bJOIN\b/i.test(sqlQuery)) && (
+                <span className="flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  🔗 Multi-Table JOIN Query
+                </span>
+              )}
               {isHealed && (
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
               )}
@@ -560,7 +565,7 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
 
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <Clock className="w-3 h-3" />
-              <span>{executionTimeMs || '4.2'} ms</span>
+              <span>⚡ DuckDB: {executionTimeMs || '4.2'} ms | 🚀 Async Pipeline</span>
             </span>
           </div>
         </div>
@@ -632,6 +637,21 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
         {/* Tab 2 Content: Syntax-Highlighted DuckDB SQL Code Block + Self-Healing Inspection */}
         {activeTab === 'sql' && (
           <div className="p-4 space-y-3">
+            {/* Multi-Table Relational JOIN Badge Banner */}
+            {Boolean(sqlQuery && /\bJOIN\b/i.test(sqlQuery)) && (
+              <div className="p-2.5 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-xs text-indigo-200 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                  <span>
+                    <strong>🔗 Multi-Table Relational JOIN:</strong> This query queries across multiple tables in the DuckDB session workspace.
+                  </span>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                  ⚡ DuckDB: {executionTimeMs || '4.2'} ms | 🚀 Async Pipeline
+                </span>
+              </div>
+            )}
+
             {/* Self-Healed SQL Telemetry Banner */}
             {isHealed && (
               <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 flex items-center justify-between">

@@ -1,115 +1,166 @@
 import random
 from datetime import datetime, timedelta
+from typing import Dict
 import pandas as pd
 
-def generate_demo_dataset() -> pd.DataFrame:
+def generate_relational_demo_datasets() -> Dict[str, pd.DataFrame]:
     """
-    Generates a realistic B2B/B2C E-commerce Sales Dataset (360+ rows).
-    Includes intentional business anomalies:
-    - Overall sales dropped significantly in March 2024 due to a critical supply chain disruption
-      in 'Enterprise Server' and 'High-End Laptops' components and shipping port bottlenecks.
-    - Top performing category: 'Cloud Infrastructure' & 'AI Hardware'
-    - Customer Segments: 'Enterprise', 'SMB', 'Consumer'
-    - Regions: 'North America', 'EMEA', 'APAC', 'LATAM'
+    Generates 3 interconnected relational demo tables for DuckDB:
+    - orders: fact table (350+ rows) with order_id, order_date, customer_id, product_id, region, quantity, revenue (March anomaly preserved)
+    - customers: dimension table (80+ rows) with customer_id, customer_name, segment, signup_date, lifetime_value
+    - products: dimension table (25+ rows) with product_id, product_name, category, cost_price, profit_margin
     """
     random.seed(42)
+
+    # 1. Products Dimension Table (26 items)
+    raw_products = [
+        ("PROD-101", "ProBook Ultra 16", "Hardware & Laptops", 1400.0, 0.32),
+        ("PROD-102", "ThinkCore Workstation X1", "Hardware & Laptops", 1800.0, 0.33),
+        ("PROD-103", "DevBox Studio M3", "Hardware & Laptops", 2300.0, 0.35),
+        ("PROD-104", "UltraSlim Air 14", "Hardware & Laptops", 950.0, 0.31),
+        ("PROD-105", "CarbonBook Pro 15", "Hardware & Laptops", 1600.0, 0.28),
+        ("PROD-106", "Enterprise Edge Server 2U", "Hardware & Laptops", 3200.0, 0.40),
+        
+        ("PROD-201", "Dedicated GPU Pod H100", "Cloud & Infrastructure", 3100.0, 0.45),
+        ("PROD-202", "High-Memory Node 128GB", "Cloud & Infrastructure", 1100.0, 0.45),
+        ("PROD-203", "Kubernetes Cluster Node", "Cloud & Infrastructure", 2600.0, 0.46),
+        ("PROD-204", "Global CDN Enterprise", "Cloud & Infrastructure", 650.0, 0.46),
+        ("PROD-205", "Distributed Object Storage 10TB", "Cloud & Infrastructure", 450.0, 0.50),
+        ("PROD-206", "VPC Dedicated Gateway", "Cloud & Infrastructure", 850.0, 0.42),
+        
+        ("PROD-301", "4K UltraFine 32-inch Monitor", "Accessories & Displays", 520.0, 0.38),
+        ("PROD-302", "Mechanical Ergonomic Keyboard", "Accessories & Displays", 120.0, 0.50),
+        ("PROD-303", "Thunderbolt 4 Pro Dock", "Accessories & Displays", 190.0, 0.47),
+        ("PROD-304", "Noise-Canceling ANC Headset", "Accessories & Displays", 160.0, 0.50),
+        ("PROD-305", "Precision Wireless Mouse", "Accessories & Displays", 65.0, 0.52),
+        ("PROD-306", "Conference AI Bar 4K", "Accessories & Displays", 850.0, 0.35),
+        
+        ("PROD-401", "CyberShield Endpoint Defense", "Software & Security", 750.0, 0.60),
+        ("PROD-402", "DataFlow Analytics Suite", "Software & Security", 1350.0, 0.55),
+        ("PROD-403", "DevSecOps CI/CD License", "Software & Security", 920.0, 0.57),
+        ("PROD-404", "AI Copilot Team Seats (10x)", "Software & Security", 480.0, 0.66),
+        ("PROD-405", "Cloud SIEM Event Ingest", "Software & Security", 1800.0, 0.50),
+        ("PROD-406", "ZeroTrust Access Gateway", "Software & Security", 1100.0, 0.52),
+        ("PROD-407", "Database Encryption Engine", "Software & Security", 1400.0, 0.48),
+        ("PROD-408", "Identity Governance Platform", "Software & Security", 2200.0, 0.55)
+    ]
+
+    products_df = pd.DataFrame(raw_products, columns=[
+        "product_id", "product_name", "category", "cost_price", "profit_margin"
+    ])
+
+    # 2. Customers Dimension Table (85 customers)
+    first_names = [
+        "Apex", "Summit", "Vanguard", "Nexus", "Quantum", "Hyperion", "Starlight", "Atlas",
+        "Echo", "Falcon", "Horizon", "Meridian", "Nova", "Omni", "Prism", "Sovereign",
+        "Vertex", "Zenith", "Borealis", "Catalyst", "Dynasty", "Fortress", "Genesis", "Ironclad",
+        "Jupiter", "Krypton", "Lumina", "Matrix", "Neutron", "Obsidian", "Pinnacle", "Radiant"
+    ]
+    suffixes = ["Technologies", "Ventures", "Systems", "Corp", "Enterprises", "Labs", "Digital", "Logistics", "Networks"]
     
-    categories = {
-        "Hardware & Laptops": [
-            ("ProBook Ultra 16", 1850.0),
-            ("ThinkCore Workstation X1", 2400.0),
-            ("DevBox Studio M3", 3100.0),
-            ("UltraSlim Air 14", 1250.0),
-        ],
-        "Cloud & Infrastructure": [
-            ("Dedicated GPU Pod H100", 4500.0),
-            ("High-Memory Node 128GB", 1600.0),
-            ("Enterprise Kubernetes Cluster", 3800.0),
-            ("Global CDN Enterprise Plan", 950.0),
-        ],
-        "Accessories & Displays": [
-            ("4K UltraFine 32-inch Monitor", 720.0),
-            ("Mechanical Ergonomic Keyboard", 180.0),
-            ("Thunderbolt 4 Pro Dock", 280.0),
-            ("Noise-Canceling ANC Headset", 240.0),
-        ],
-        "Software & Security": [
-            ("CyberShield Endpoint Defense", 1200.0),
-            ("DataFlow Analytics Suite", 2100.0),
-            ("DevSecOps CI/CD License", 1450.0),
-            ("AI Copilot Team Seats (10x)", 800.0),
-        ]
-    }
+    consumer_names = [
+        "Alexander Wright", "Elena Rostova", "Marcus Chen", "Sarah Jenkins", "David Kim",
+        "Olivia Taylor", "Liam O'Connor", "Aria Patel", "James Wilson", "Chloe Martin",
+        "Ethan Brooks", "Sophia Alvarez", "Noah Campbell", "Isabella Rossi", "Lucas Becker"
+    ]
+
+    segments = ["Enterprise", "SMB", "Consumer"]
+    segment_weights = [0.45, 0.40, 0.15]
     
+    customers_data = []
+    signup_start = datetime(2022, 1, 1)
+    
+    for c_idx in range(1, 86):
+        cid = f"CUST-{1000 + c_idx}"
+        seg = random.choices(segments, weights=segment_weights)[0]
+        if seg == "Consumer":
+            cname = random.choice(consumer_names) + f" #{c_idx}"
+            ltv_base = random.uniform(1500, 6000)
+        elif seg == "SMB":
+            cname = f"{random.choice(first_names)} {random.choice(suffixes)}"
+            ltv_base = random.uniform(8000, 35000)
+        else: # Enterprise
+            cname = f"{random.choice(first_names)} Global {random.choice(suffixes)}"
+            ltv_base = random.uniform(40000, 180000)
+            
+        signup_dt = signup_start + timedelta(days=random.randint(0, 700))
+        customers_data.append({
+            "customer_id": cid,
+            "customer_name": cname,
+            "segment": seg,
+            "signup_date": signup_dt.strftime("%Y-%m-%d"),
+            "lifetime_value": round(ltv_base, 2)
+        })
+        
+    customers_df = pd.DataFrame(customers_data)
+
+    # 3. Orders Fact Table (365 rows)
     regions = ["North America", "EMEA", "APAC", "LATAM"]
     region_weights = [0.45, 0.30, 0.18, 0.07]
+
+    orders_start = datetime(2024, 1, 1)
+    orders_end = datetime(2024, 6, 30)
+    total_days = (orders_end - orders_start).days
+
+    orders_data = []
+    prod_lookup = {row["product_id"]: row for _, row in products_df.iterrows()}
+    cust_lookup = {row["customer_id"]: row for _, row in customers_df.iterrows()}
     
-    segments = ["Enterprise", "SMB", "Consumer"]
-    segment_weights = [0.50, 0.35, 0.15]
-    
-    start_date = datetime(2024, 1, 1)
-    end_date = datetime(2024, 6, 30)
-    total_days = (end_date - start_date).days
-    
-    records = []
-    
-    # Generate ~380 records distributed across 6 months
-    for i in range(1, 381):
-        # Pick a date
+    customer_ids = list(cust_lookup.keys())
+    product_ids = list(prod_lookup.keys())
+
+    for o_idx in range(1, 366):
+        oid = f"ORD-{2024000 + o_idx}"
         day_offset = random.randint(0, total_days)
-        order_date = start_date + timedelta(days=day_offset)
+        order_date = orders_start + timedelta(days=day_offset)
         month = order_date.month
-        
-        # Pick category and product
-        cat_name = random.choice(list(categories.keys()))
-        product_name, base_price = random.choice(categories[cat_name])
-        
-        region = random.choices(regions, weights=region_weights)[0]
-        segment = random.choices(segments, weights=segment_weights)[0]
-        
-        # Quantity logic
-        if segment == "Enterprise":
-            qty = random.choices([2, 3, 5, 8, 12], weights=[0.3, 0.3, 0.2, 0.15, 0.05])[0]
-        elif segment == "SMB":
-            qty = random.choices([1, 2, 3, 4], weights=[0.4, 0.3, 0.2, 0.1])[0]
+
+        cid = random.choice(customer_ids)
+        c_seg = cust_lookup[cid]["segment"]
+
+        pid = random.choice(product_ids)
+        p_info = prod_lookup[pid]
+        base_unit_price = round(p_info["cost_price"] / (1.0 - p_info["profit_margin"]), 2)
+
+        # Quantity scaling by customer segment
+        if c_seg == "Enterprise":
+            qty = random.choices([2, 3, 5, 8, 12], weights=[0.30, 0.30, 0.20, 0.15, 0.05])[0]
+        elif c_seg == "SMB":
+            qty = random.choices([1, 2, 3, 4], weights=[0.40, 0.35, 0.15, 0.10])[0]
         else:
-            qty = random.choices([1, 2], weights=[0.8, 0.2])[0]
-            
-        # Intentional anomaly for March:
-        # Sales drop sharply in March due to supply chain stockouts in hardware and enterprise procurement freezes
+            qty = random.choices([1, 2], weights=[0.85, 0.15])[0]
+
+        reg = random.choices(regions, weights=region_weights)[0]
+
+        # March Anomaly: Supply chain disruption in Hardware & Cloud
         if month == 3:
-            # 60% chance to drop quantity to 1 or skip high-ticket orders
-            if "Hardware" in cat_name or "Cloud" in cat_name:
-                # Severe drop: 50% discount forced due to stockout delays and canceled batch orders
+            if "Hardware" in p_info["category"] or "Cloud" in p_info["category"]:
                 if random.random() < 0.65:
                     qty = 1
-                    base_price = base_price * 0.45  # Heavily discounted refund or penalty
-            revenue = round(base_price * qty * random.uniform(0.70, 0.85), 2)
+                    base_unit_price = round(base_unit_price * 0.45, 2)
+            revenue = round(base_unit_price * qty * random.uniform(0.70, 0.85), 2)
         else:
-            # Normal months
-            multiplier = 1.0
-            if month in (5, 6): # Q2 recovery boom
-                multiplier = 1.15
-            revenue = round(base_price * qty * random.uniform(0.92, 1.08) * multiplier, 2)
-            
-        records.append({
-            "order_id": f"ORD-{2024000 + i}",
-            "date": order_date.strftime("%Y-%m-%d"),
-            "product_name": product_name,
-            "category": cat_name,
-            "region": region,
-            "customer_segment": segment,
+            multiplier = 1.15 if month in (5, 6) else 1.0
+            revenue = round(base_unit_price * qty * random.uniform(0.95, 1.05) * multiplier, 2)
+
+        orders_data.append({
+            "order_id": oid,
+            "order_date": order_date.strftime("%Y-%m-%d"),
+            "customer_id": cid,
+            "product_id": pid,
+            "region": reg,
             "quantity": qty,
             "revenue": revenue
         })
-        
-    df = pd.DataFrame(records)
-    df = df.sort_values(by="date").reset_index(drop=True)
-    return df
 
-if __name__ == "__main__":
-    df = generate_demo_dataset()
-    print("Demo dataset shape:", df.shape)
-    print("March revenue vs Feb revenue:")
-    df["month"] = pd.to_datetime(df["date"]).dt.month
-    print(df.groupby("month")["revenue"].sum())
+    orders_df = pd.DataFrame(orders_data).sort_values(by="order_date").reset_index(drop=True)
+
+    return {
+        "orders": orders_df,
+        "customers": customers_df,
+        "products": products_df
+    }
+
+def generate_demo_dataset() -> pd.DataFrame:
+    """Legacy helper returning orders dataframe for backward compatibility."""
+    return generate_relational_demo_datasets()["orders"]

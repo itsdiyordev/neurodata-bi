@@ -43,6 +43,32 @@ export interface CleaningReport {
   data_health_score: number;
 }
 
+export interface WorkspaceTable {
+  table_name: string;
+  original_filename: string;
+  row_count: number;
+  columns: ColumnInfo[];
+  columns_count: number;
+  cleaning_report?: CleaningReport;
+  is_active?: boolean;
+}
+
+export interface TableRelationship {
+  source_table: string;
+  source_column: string;
+  target_table: string;
+  target_column: string;
+  join_clause: string;
+  relationship_type?: string;
+}
+
+export interface ExecutionMetrics {
+  sql_ms: number;
+  llm_ms: number;
+  async_background_summary: boolean;
+  is_join?: boolean;
+}
+
 export interface DataProfile {
   has_data: boolean;
   table_name: string;
@@ -54,6 +80,8 @@ export interface DataProfile {
   kpis: KPIData;
   default_chart?: ChartConfig;
   cleaning_report?: CleaningReport;
+  workspace_tables?: WorkspaceTable[];
+  relationships?: TableRelationship[];
 }
 
 export interface ReasoningTraceStep {
@@ -81,8 +109,10 @@ export interface ChatMessage {
   healing_attempts?: number;
   failed_queries?: FailedQuery[];
   is_healed?: boolean;
+  is_join?: boolean;
   chart_config?: ChartConfig;
   engine?: string;
   context_strategy?: string;
   context_summary?: string;
+  execution_metrics?: ExecutionMetrics;
 }

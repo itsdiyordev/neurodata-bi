@@ -51,6 +51,7 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const quickPrompts = [
+    "🔗 Show revenue by customer segment & product category (Multi-Table JOIN)",
     "What is our best-selling product?",
     "Why did sales drop in March?",
     "Show top 5 categories by revenue"
@@ -239,6 +240,16 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                     </div>
                   ) : (
                     <div className="max-w-[95%] w-full glass-panel-elevated p-3.5 rounded-2xl rounded-tl-sm border border-slate-800 text-xs space-y-3">
+                      {/* Multi-Table JOIN Query Badge */}
+                      {(msg.is_join || (msg.sql_query && /\bJOIN\b/i.test(msg.sql_query))) && (
+                        <div className="flex items-center gap-1.5 p-2 rounded-xl bg-indigo-500/15 border border-indigo-500/30 text-indigo-300 text-[11px] font-mono shadow-glow-indigo">
+                          <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+                          <span>
+                            <strong>🔗 Multi-Table JOIN Query:</strong> Relational execution across active DuckDB tables
+                          </span>
+                        </div>
+                      )}
+
                       {/* Self-Healed SQL Telemetry Badge */}
                       {msg.is_healed && (
                         <div className="flex items-center justify-between p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-[11px] font-mono shadow-glow-emerald">
@@ -333,10 +344,14 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
                       {/* Query Execution Telemetry Tag */}
                       {msg.sql_query && (
                         <div className="flex items-center justify-between text-[10px] font-mono text-slate-500 pt-1 border-t border-slate-800/60">
-                          <span className="flex items-center gap-1 text-emerald-400">
-                            <Clock className="w-3 h-3" />
-                            <span>Executed in {msg.execution_time_ms || 4.2} ms</span>
-                          </span>
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="flex items-center gap-1 text-emerald-400">
+                              <Clock className="w-3 h-3" />
+                              <span>⚡ DuckDB: {msg.execution_time_ms || 4.2} ms</span>
+                            </span>
+                            <span className="text-slate-600">|</span>
+                            <span className="text-indigo-400 font-medium">🚀 Async Pipeline</span>
+                          </div>
                           <span className="text-slate-400">{msg.row_count || 0} rows</span>
                         </div>
                       )}

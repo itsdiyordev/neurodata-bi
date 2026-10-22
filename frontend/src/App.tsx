@@ -6,7 +6,7 @@ import { LiveDbModal } from './components/LiveDbModal';
 import { DataSanitizerModal } from './components/DataSanitizerModal';
 import { ExecutiveReportModal } from './components/ExecutiveReportModal';
 import { AgentationWrapper } from './components/AgentationWrapper';
-import type { DataProfile, ChartConfig, ChatMessage, KPIData, CleaningReport, FailedQuery } from './types';
+import type { DataProfile, ChartConfig, ChatMessage, KPIData, CleaningReport, FailedQuery, WorkspaceTable, TableRelationship } from './types';
 
 // Dynamic API base: uses relative /api when built/containerized, or localhost:8000 when running standalone Vite dev
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 
@@ -24,6 +24,10 @@ export const App: React.FC = () => {
   const [isSanitizerModalOpen, setIsSanitizerModalOpen] = useState<boolean>(false);
   const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
   const [cleaningReport, setCleaningReport] = useState<CleaningReport | null>(null);
+
+  // Multi-Table Workspace State
+  const [workspaceTables, setWorkspaceTables] = useState<WorkspaceTable[]>([]);
+  const [relationships, setRelationships] = useState<TableRelationship[]>([]);
 
   // Self-Healing Telemetry State
   const [isHealed, setIsHealed] = useState<boolean>(false);
@@ -63,6 +67,12 @@ export const App: React.FC = () => {
           if (data.cleaning_report) {
             setCleaningReport(data.cleaning_report);
           }
+          if (data.workspace_tables) {
+            setWorkspaceTables(data.workspace_tables);
+          }
+          if (data.relationships) {
+            setRelationships(data.relationships);
+          }
           if (data.profile.default_chart) {
             setChartConfig(data.profile.default_chart);
             setSqlQuery(data.profile.default_chart.sql_query || '');
@@ -74,10 +84,11 @@ export const App: React.FC = () => {
           if (data.chat_history && data.chat_history.length > 0) {
             setMessages(data.chat_history);
           } else {
+            const tableCount = data.workspace_tables?.length || 1;
             const restoreMsg: ChatMessage = {
               id: `msg-restore-${Date.now()}`,
               sender: 'ai',
-              text: `🔄 Active dataset successfully restored from local persistent DuckDB storage (${data.profile.total_records.toLocaleString()} records). Schema and distribution charts are live without data loss.`,
+              text: `🔄 Relational workspace restored from persistent DuckDB storage (${tableCount} table${tableCount > 1 ? 's' : ''}, ${data.profile.total_records.toLocaleString()} records). Auto-JOIN detection and schemas are live.`,
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
               engine: 'DuckDB Persistent Engine',
             };
@@ -116,6 +127,12 @@ export const App: React.FC = () => {
 
       setDataProfile(profile);
       setCleaningReport(report);
+      if (result.workspace_tables) {
+        setWorkspaceTables(result.workspace_tables);
+      }
+      if (result.relationships) {
+        setRelationships(result.relationships);
+      }
 
       if (profile.default_chart) {
         setChartConfig(profile.default_chart);
@@ -132,7 +149,7 @@ export const App: React.FC = () => {
       const welcomeMsg: ChatMessage = {
         id: `msg-${Date.now()}`,
         sender: 'ai',
-        text: `✨ Successfully ingested and auto-sanitized "${file.name}" into DuckDB table "${profile.table_name}" (${profile.total_records.toLocaleString()} records).\n\n• ETL Pipeline normalized ${colsNormalized} column names to SQL-safe identifiers.\n• ${rowsTrimmed} empty/corrupted rows trimmed.\n• Data health score: ${health}%.\n\nAsk me any business question or pick a prompt below!`,
+        text: `✨ Successfully ingested and auto-sanitized "${file.name}" into DuckDB table "${profile.table_name}" (${profile.total_records.toLocaleString()} records).\n\n• ETL Pipeline normalized ${colsNormalized} column names to SQL-safe identifiers.\n• ${rowsTrimmed} empty/corrupted rows trimmed.\n• Data health score: ${health}%.\n• Workspace now has ${result.workspace_tables?.length || 1} active table(s) ready for multi-table JOIN queries.\n\nAsk me any business question across your tables or pick a prompt below!`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         engine: 'DuckDB Persistent Engine',
       };
@@ -144,7 +161,7 @@ export const App: React.FC = () => {
     }
   };
 
-  // 2. Load Demo Dataset Handler
+  // 2. Load Demo Dataset Handler (3 Relational Tables: orders, customers, products)
   const handleLoadDemo = async () => {
     setIsLoading(true);
     try {
@@ -166,6 +183,12 @@ export const App: React.FC = () => {
 
       setDataProfile(profile);
       setCleaningReport(report);
+      if (result.workspace_tables) {
+        setWorkspaceTables(result.workspace_tables);
+      }
+      if (result.relationships) {
+        setRelationships(result.relationships);
+      }
 
       if (profile.default_chart) {
         setChartConfig(profile.default_chart);
@@ -178,7 +201,7 @@ export const App: React.FC = () => {
       const welcomeMsg: ChatMessage = {
         id: `msg-${Date.now()}`,
         sender: 'ai',
-        text: `✨ Loaded & auto-cleaned E-Commerce Demo Dataset with ${profile.total_records.toLocaleString()} orders into persistent DuckDB table "${profile.table_name}". Data health verified at ${report?.data_health_score || 99.8}%. Notice the monthly revenue trends across North America, EMEA, and APAC. Try asking: "Why did sales drop in March?" or "What is our best-selling product?"`,
+        text: `✨ Loaded & auto-cleaned Relational E-Commerce Demo Dataset with 3 interconnected tables into persistent DuckDB:\n• 📦 orders (${profile.total_records.toLocaleString()} rows: revenue, quantity, region)\n• 👥 customers (85 rows: segment, lifetime_value)\n• 🏷️ products (26 rows: category, cost_price, profit_margin)\n\n🔗 Auto-detected join keys: orders.customer_id ↔ customers.customer_id and orders.product_id ↔ products.product_id.\n\nTry asking: "Show revenue by customer segment & product category" to test multi-table SQL JOIN queries!`,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         engine: 'DuckDB Persistent Engine',
       };
@@ -190,7 +213,78 @@ export const App: React.FC = () => {
     }
   };
 
-  // 3. Ask Copilot Handler (with Autonomous Self-Healing Support)
+  // 3. Switch Active Preview Table Handler
+  const handleSelectTable = async (tableName: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/tables/active/${tableName}?session_id=${sessionId}`, {
+        method: 'POST',
+        headers: {
+          'X-Session-ID': sessionId,
+        },
+      });
+      if (!res.ok) throw new Error('Failed to switch active table');
+      const data = await res.json();
+      if (data.profile) {
+        setDataProfile(data.profile);
+        if (data.profile.preview_rows) {
+          setTableData(data.profile.preview_rows);
+        }
+        if (data.profile.default_chart) {
+          setChartConfig(data.profile.default_chart);
+          setSqlQuery(data.profile.default_chart.sql_query || '');
+        }
+      }
+      if (data.workspace_tables) {
+        setWorkspaceTables(data.workspace_tables);
+      }
+    } catch (err: any) {
+      console.error('Error switching active table:', err);
+    }
+  };
+
+  // 4. Delete Table from Workspace Handler
+  const handleDeleteTable = async (tableName: string) => {
+    if (!confirm(`Are you sure you want to remove table "${tableName}" from the workspace?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/tables/${tableName}?session_id=${sessionId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Session-ID': sessionId,
+        },
+      });
+      if (!res.ok) throw new Error('Failed to delete table');
+      const data = await res.json();
+      if (data.workspace_tables) {
+        setWorkspaceTables(data.workspace_tables);
+      }
+      if (data.relationships) {
+        setRelationships(data.relationships);
+      }
+      if (data.profile) {
+        setDataProfile(data.profile);
+        setTableData(data.profile.preview_rows || []);
+      } else {
+        setDataProfile(null);
+        setTableData([]);
+        setChartConfig(null);
+        setSqlQuery('');
+      }
+      const deleteMsg: ChatMessage = {
+        id: `msg-delete-${Date.now()}`,
+        sender: 'ai',
+        text: `🗑️ Table "${tableName}" was removed from the workspace. Active tables: ${data.workspace_tables?.length || 0}.`,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        engine: 'DuckDB Workspace Registry',
+      };
+      setMessages((prev) => [...prev, deleteMsg]);
+    } catch (err: any) {
+      alert(`Failed to delete table: ${err.message}`);
+    }
+  };
+
+  // 5. Ask Copilot Handler (with Autonomous Self-Healing & Async Background Summary Support)
   const handleSendMessage = async (text: string, simulateHealing: boolean = false) => {
     if (!text.trim() || isLoading) return;
 
@@ -258,6 +352,8 @@ export const App: React.FC = () => {
         healing_attempts: analysis.healing_attempts,
         failed_queries: analysis.failed_queries,
         is_healed: analysis.is_healed,
+        is_join: analysis.is_join,
+        execution_metrics: analysis.execution_metrics,
         chart_config: analysis.chart_config,
         engine: analysis.engine,
         context_strategy: analysis.context_strategy,
@@ -344,10 +440,14 @@ export const App: React.FC = () => {
         tableName={dataProfile?.table_name || 'dataset'}
         totalRecords={dataProfile?.total_records || 0}
         columns={dataProfile?.columns || []}
+        workspaceTables={workspaceTables}
+        relationships={relationships}
         isLoading={isLoading}
         cleaningReport={cleaningReport}
         onUpload={handleUpload}
         onLoadDemo={handleLoadDemo}
+        onSelectTable={handleSelectTable}
+        onDeleteTable={handleDeleteTable}
         onOpenLiveDbModal={() => setIsLiveDbModalOpen(true)}
         onOpenSanitizerModal={() => setIsSanitizerModalOpen(true)}
       />
