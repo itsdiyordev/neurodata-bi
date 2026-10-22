@@ -17,7 +17,15 @@ import {
   ChevronRight,
   Download,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  Pin,
+  Trash2,
+  LayoutDashboard,
+  Compass,
+  ExternalLink,
+  ChevronDown,
+  ChevronUp,
+  Zap
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -32,7 +40,7 @@ import {
   Tooltip, 
   CartesianGrid 
 } from 'recharts';
-import type { KPIData, ChartConfig, CleaningReport, FailedQuery } from '../types';
+import type { KPIData, ChartConfig, CleaningReport, FailedQuery, ProactiveInsight, PinnedWidget } from '../types';
 
 interface DashboardCanvasProps {
   hasData: boolean;
@@ -46,6 +54,14 @@ interface DashboardCanvasProps {
   isHealed?: boolean;
   healingAttempts?: number;
   failedQueries?: FailedQuery[];
+  proactiveInsights?: ProactiveInsight[];
+  pinnedWidgets?: PinnedWidget[];
+  canvasViewMode?: 'explorer' | 'dashboard';
+  onViewModeChange?: (mode: 'explorer' | 'dashboard') => void;
+  onPinCurrentChart?: () => void;
+  onUnpinWidget?: (widgetId: string) => void;
+  onInvestigateInsight?: (insight: ProactiveInsight) => void;
+  onOpenWidgetInExplorer?: (widget: PinnedWidget) => void;
   onLoadDemo: () => void;
   onUploadClick: () => void;
   onOpenSanitizerModal?: () => void;
@@ -64,6 +80,14 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
   isHealed,
   healingAttempts,
   failedQueries,
+  proactiveInsights = [],
+  pinnedWidgets = [],
+  canvasViewMode = 'explorer',
+  onViewModeChange,
+  onPinCurrentChart,
+  onUnpinWidget,
+  onInvestigateInsight,
+  onOpenWidgetInExplorer,
   onLoadDemo,
   onUploadClick,
   onOpenSanitizerModal,
@@ -73,6 +97,9 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
   const [chartTypeOverride, setChartTypeOverride] = useState<'bar' | 'line' | 'area' | null>(null);
   const [copied, setCopied] = useState(false);
   const [showFailedSql, setShowFailedSql] = useState(false);
+  const [isInsightsExpanded, setIsInsightsExpanded] = useState<boolean>(true);
+  const [pinnedChartTypes, setPinnedChartTypes] = useState<Record<string, 'bar' | 'line' | 'area'>>({});
+  const [pinnedShowSql, setPinnedShowSql] = useState<Record<string, boolean>>({});
   const [page, setPage] = useState(1);
   const pageSize = 8;
 
@@ -240,15 +267,44 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
           )}
         </div>
 
-        {/* Export Executive Report Button */}
-        <button
-          type="button"
-          onClick={onOpenReportModal}
-          className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-xs font-semibold text-white shadow-glow-indigo transition-all btn-press group"
-        >
-          <FileText className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
-          <span>📥 Export AI Report</span>
-        </button>
+        {/* View Switcher & Export Executive Report Buttons */}
+        <div className="flex items-center gap-2.5">
+          <div className="flex items-center p-1 rounded-xl bg-slate-950/80 border border-slate-800">
+            <button
+              type="button"
+              onClick={() => onViewModeChange?.('explorer')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold btn-press transition-all ${
+                canvasViewMode === 'explorer'
+                  ? 'bg-indigo-600 text-white shadow-glow-indigo'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>🔍 Active Explorer</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onViewModeChange?.('dashboard')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold btn-press transition-all ${
+                canvasViewMode === 'dashboard'
+                  ? 'bg-purple-600 text-white shadow-glow-purple'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <LayoutDashboard className="w-3.5 h-3.5" />
+              <span>🎛️ Pinned Dashboard ({pinnedWidgets.length})</span>
+            </button>
+          </div>
+
+          <button
+            type="button"
+            onClick={onOpenReportModal}
+            className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-xs font-semibold text-white shadow-glow-indigo transition-all btn-press group"
+          >
+            <FileText className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+            <span>📥 Export AI Report</span>
+          </button>
+        </div>
       </div>
 
       {/* Top Row: 4 KPI Cards */}
@@ -338,65 +394,146 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
         </div>
       </div>
 
-      {/* Middle Section: Main Visualization Canvas */}
-      <div className="glass-panel rounded-2xl p-5 border border-slate-800/80 shadow-glass">
-        {/* Card Header & Chart Switcher */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-800/80 mb-4">
-          <div className="space-y-0.5">
-            <h3 className="text-sm font-semibold text-white tracking-tight flex items-center gap-2">
-              <span>{chartConfig?.title || 'Interactive Visualization Canvas'}</span>
-              {executionTimeMs > 0 && (
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
-                  {executionTimeMs} ms
-                </span>
-              )}
-            </h3>
-            <p className="text-xs text-slate-400">
-              Plotting <span className="font-mono text-indigo-300">{chartConfig?.y_key}</span> against{' '}
-              <span className="font-mono text-slate-300">{chartConfig?.x_key}</span>
-            </p>
+      {/* Middle Section: Collapsible Zero-Prompt AI Insights & Anomalies Strip */}
+      {proactiveInsights && proactiveInsights.length > 0 && (
+        <div className="rounded-2xl border border-slate-800/80 bg-slate-950/60 overflow-hidden shadow-glass">
+          <div 
+            onClick={() => setIsInsightsExpanded(!isInsightsExpanded)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-slate-900/40 hover:bg-slate-900/60 cursor-pointer transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-400">
+                <Zap className="w-4 h-4 animate-pulse" />
+              </div>
+              <span className="text-xs font-bold uppercase tracking-wider text-white">
+                ⚡ AI Zero-Prompt Insights &amp; Anomalies ({proactiveInsights.length} detected)
+              </span>
+              <span className="text-[10px] text-slate-400 font-normal hidden sm:inline">
+                &bull; Autonomous statistical DuckDB scan on load
+              </span>
+            </div>
+            <button type="button" className="text-slate-400 hover:text-white">
+              {isInsightsExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
           </div>
 
-          {/* Chart Type Switcher Segmented Control */}
-          <div className="flex items-center p-1 rounded-xl bg-slate-900/80 border border-slate-800">
-            <button
-              type="button"
-              onClick={() => setChartTypeOverride('bar')}
-              className={`p-1.5 rounded-lg text-xs flex items-center gap-1 btn-press transition-colors ${
-                effectiveChartType === 'bar'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-              title="Bar Chart"
-            >
-              <BarChart3 className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setChartTypeOverride('line')}
-              className={`p-1.5 rounded-lg text-xs flex items-center gap-1 btn-press transition-colors ${
-                effectiveChartType === 'line'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-              title="Line Chart"
-            >
-              <LineChartIcon className="w-4 h-4" />
-            </button>
-            <button
-              type="button"
-              onClick={() => setChartTypeOverride('area')}
-              className={`p-1.5 rounded-lg text-xs flex items-center gap-1 btn-press transition-colors ${
-                effectiveChartType === 'area'
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-              title="Area Chart"
-            >
-              <AreaChartIcon className="w-4 h-4" />
-            </button>
-          </div>
+          {isInsightsExpanded && (
+            <div className="p-4 grid grid-cols-1 md:grid-cols-3 gap-3 border-t border-slate-800/60">
+              {proactiveInsights.map((ins) => {
+                const isAnomaly = ins.type === 'anomaly';
+                const isDriver = ins.type === 'driver';
+                const borderClass = isAnomaly ? 'border-amber-500/30 hover:border-amber-500/50 bg-amber-500/5' :
+                                   isDriver ? 'border-emerald-500/30 hover:border-emerald-500/50 bg-emerald-500/5' :
+                                   'border-indigo-500/30 hover:border-indigo-500/50 bg-indigo-500/5';
+                const badgeClass = isAnomaly ? 'bg-amber-500/20 text-amber-300 border-amber-500/30' :
+                                   isDriver ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' :
+                                   'bg-indigo-500/20 text-indigo-300 border-indigo-500/30';
+                const badgeText = isAnomaly ? '⚠️ Anomaly Detected' :
+                                  isDriver ? '🏆 Top Driver' : '📈 Trend Alert';
+
+                return (
+                  <div key={ins.id} className={`p-3.5 rounded-xl border ${borderClass} flex flex-col justify-between space-y-2.5 transition-all`}>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-semibold border ${badgeClass}`}>
+                          {badgeText}
+                        </span>
+                      </div>
+                      <h4 className="text-xs font-bold text-white font-sans">{ins.title}</h4>
+                      <p className="text-[11px] text-slate-300 leading-relaxed font-sans">{ins.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onInvestigateInsight?.(ins)}
+                      className="flex items-center justify-center gap-1.5 w-full py-1.5 px-3 rounded-lg text-xs font-semibold bg-slate-800/80 hover:bg-slate-700 text-indigo-300 hover:text-white border border-slate-700 btn-press transition-all"
+                    >
+                      <span>🔎 Investigate</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
+      )}
+
+      {/* VIEW MODE 1: ACTIVE EXPLORER */}
+      {canvasViewMode === 'explorer' ? (
+        <>
+          {/* Main Visualization Canvas */}
+          <div className="glass-panel rounded-2xl p-5 border border-slate-800/80 shadow-glass">
+            {/* Card Header & Chart Switcher */}
+            <div className="flex items-center justify-between pb-4 border-b border-slate-800/80 mb-4">
+              <div className="space-y-0.5">
+                <h3 className="text-sm font-semibold text-white tracking-tight flex items-center gap-2">
+                  <span>{chartConfig?.title || 'Interactive Visualization Canvas'}</span>
+                  {executionTimeMs > 0 && (
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">
+                      {executionTimeMs} ms
+                    </span>
+                  )}
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Plotting <span className="font-mono text-indigo-300">{chartConfig?.y_key}</span> against{' '}
+                  <span className="font-mono text-slate-300">{chartConfig?.x_key}</span>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Chart Type Switcher Segmented Control */}
+                <div className="flex items-center p-1 rounded-xl bg-slate-900/80 border border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setChartTypeOverride('bar')}
+                    className={`p-1.5 rounded-lg text-xs flex items-center gap-1 btn-press transition-colors ${
+                      effectiveChartType === 'bar'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Bar Chart"
+                  >
+                    <BarChart3 className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChartTypeOverride('line')}
+                    className={`p-1.5 rounded-lg text-xs flex items-center gap-1 btn-press transition-colors ${
+                      effectiveChartType === 'line'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Line Chart"
+                  >
+                    <LineChartIcon className="w-4 h-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setChartTypeOverride('area')}
+                    className={`p-1.5 rounded-lg text-xs flex items-center gap-1 btn-press transition-colors ${
+                      effectiveChartType === 'area'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                    title="Area Chart"
+                  >
+                    <AreaChartIcon className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Pin to Board Action Button */}
+                {onPinCurrentChart && chartConfig && (
+                  <button
+                    type="button"
+                    onClick={onPinCurrentChart}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 shadow-glow-emerald btn-press transition-all"
+                    title="Pin this chart to your persistent Pinned Dashboard"
+                  >
+                    <Pin className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>📌 Pin to Board</span>
+                  </button>
+                )}
+              </div>
+            </div>
 
         {/* Dynamic Recharts Component */}
         <div className="h-72 w-full pt-2">
@@ -717,6 +854,191 @@ export const DashboardCanvas: React.FC<DashboardCanvasProps> = ({
           </div>
         )}
       </div>
+        </>
+      ) : (
+        /* VIEW MODE 2: PINNED DASHBOARD (2-Column Bento Grid) */
+        <div className="space-y-5">
+          {pinnedWidgets.length === 0 ? (
+            <div className="p-12 text-center rounded-2xl border-2 border-dashed border-slate-800 bg-slate-900/30 space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center mx-auto text-purple-400">
+                <LayoutDashboard className="w-7 h-7" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-white">No Pinned Charts Yet</h3>
+                <p className="text-xs text-slate-400 max-w-md mx-auto">
+                  Pin charts from your <strong>Active Explorer</strong> or from the <strong>AI Copilot</strong> chat responses to create a customized multi-widget BI dashboard.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onViewModeChange?.('explorer')}
+                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-glow-indigo btn-press transition-all"
+              >
+                <Compass className="w-3.5 h-3.5" />
+                <span>Return to Active Explorer</span>
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {pinnedWidgets.map((widget) => {
+                const effectiveType = pinnedChartTypes[widget.id] || widget.chart_config?.type || 'bar';
+                const showSql = Boolean(pinnedShowSql[widget.id]);
+                const chartData = widget.chart_data || widget.chart_config?.data || [];
+                const xKey = widget.chart_config?.x_key || 'x';
+                const yKey = widget.chart_config?.y_key || 'y';
+
+                return (
+                  <div
+                    key={widget.id}
+                    className="glass-panel rounded-2xl p-5 border border-slate-800/80 shadow-glass flex flex-col justify-between hover:border-slate-700/80 transition-all"
+                  >
+                    {/* Widget Header */}
+                    <div>
+                      <div className="flex items-start justify-between gap-3 pb-3 border-b border-slate-800/60 mb-3">
+                        <div className="space-y-1 min-w-0">
+                          <h4 className="text-sm font-bold text-white truncate flex items-center gap-2">
+                            <span>{widget.title}</span>
+                          </h4>
+                          <div className="flex items-center gap-2 text-[11px] text-slate-400 font-mono">
+                            <span>x: {xKey}</span>
+                            <span>&bull;</span>
+                            <span>y: {yKey}</span>
+                            <span>&bull;</span>
+                            <span>{chartData.length} records</span>
+                          </div>
+                        </div>
+
+                        {/* Widget Actions: Mini Chart Switcher, SQL, Open in Explorer, Unpin */}
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          {/* Mini Chart Switcher */}
+                          <div className="flex items-center p-0.5 rounded-lg bg-slate-900/80 border border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => setPinnedChartTypes(prev => ({ ...prev, [widget.id]: 'bar' }))}
+                              className={`p-1 rounded text-xs transition-colors ${effectiveType === 'bar' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                              title="Bar Chart"
+                            >
+                              <BarChart3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPinnedChartTypes(prev => ({ ...prev, [widget.id]: 'line' }))}
+                              className={`p-1 rounded text-xs transition-colors ${effectiveType === 'line' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                              title="Line Chart"
+                            >
+                              <LineChartIcon className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPinnedChartTypes(prev => ({ ...prev, [widget.id]: 'area' }))}
+                              className={`p-1 rounded text-xs transition-colors ${effectiveType === 'area' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                              title="Area Chart"
+                            >
+                              <AreaChartIcon className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+
+                          {/* Toggle SQL */}
+                          <button
+                            type="button"
+                            onClick={() => setPinnedShowSql(prev => ({ ...prev, [widget.id]: !prev[widget.id] }))}
+                            className={`p-1.5 rounded-lg border text-xs btn-press transition-colors ${showSql ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-900/80 text-slate-400 hover:text-white border-slate-800'}`}
+                            title="View DuckDB SQL"
+                          >
+                            <Code2 className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Open in Explorer */}
+                          {onOpenWidgetInExplorer && (
+                            <button
+                              type="button"
+                              onClick={() => onOpenWidgetInExplorer(widget)}
+                              className="p-1.5 rounded-lg bg-slate-900/80 hover:bg-slate-800 text-slate-400 hover:text-indigo-300 border border-slate-800 btn-press transition-colors"
+                              title="Open in Active Explorer"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          {/* Unpin */}
+                          {onUnpinWidget && (
+                            <button
+                              type="button"
+                              onClick={() => onUnpinWidget(widget.id)}
+                              className="p-1.5 rounded-lg bg-slate-900/80 hover:bg-red-500/20 text-slate-400 hover:text-red-400 border border-slate-800 btn-press transition-colors"
+                              title="Unpin Widget"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* SQL Code Block if open */}
+                      {showSql && (
+                        <div className="mb-3 p-2.5 rounded-xl bg-slate-950 border border-slate-800 font-mono text-[11px] text-indigo-300 overflow-x-auto whitespace-pre-wrap">
+                          {widget.sql_query}
+                        </div>
+                      )}
+
+                      {/* Interactive Recharts Canvas */}
+                      <div className="h-56 w-full pt-1">
+                        {chartData && chartData.length > 0 ? (
+                          <ResponsiveContainer width="100%" height="100%">
+                            {effectiveType === 'line' ? (
+                              <LineChart data={chartData} margin={{ top: 10, right: 15, left: -10, bottom: 15 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                                <XAxis dataKey={xKey} stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} />
+                                <YAxis stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} tickFormatter={(v) => (typeof v === 'number' && v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Line type="monotone" dataKey={yKey} stroke="#6366f1" strokeWidth={2} dot={{ fill: '#6366f1', r: 3 }} activeDot={{ r: 5, fill: '#818cf8' }} />
+                              </LineChart>
+                            ) : effectiveType === 'area' ? (
+                              <AreaChart data={chartData} margin={{ top: 10, right: 15, left: -10, bottom: 15 }}>
+                                <defs>
+                                  <linearGradient id={`pinnedArea_${widget.id}`} x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.4} />
+                                    <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0.0} />
+                                  </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                                <XAxis dataKey={xKey} stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} />
+                                <YAxis stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} tickFormatter={(v) => (typeof v === 'number' && v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Area type="monotone" dataKey={yKey} stroke="#8b5cf6" strokeWidth={2} fillOpacity={1} fill={`url(#pinnedArea_${widget.id})`} />
+                              </AreaChart>
+                            ) : (
+                              <BarChart data={chartData} margin={{ top: 10, right: 15, left: -10, bottom: 15 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1f2937" vertical={false} />
+                                <XAxis dataKey={xKey} stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} />
+                                <YAxis stroke="#64748b" fontSize={10} fontFamily="monospace" tickLine={false} tickFormatter={(v) => (typeof v === 'number' && v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
+                                <Tooltip content={<CustomTooltip />} />
+                                <Bar dataKey={yKey} fill="#6366f1" radius={[4, 4, 0, 0]} />
+                              </BarChart>
+                            )}
+                          </ResponsiveContainer>
+                        ) : (
+                          <div className="h-full flex items-center justify-center text-xs text-slate-500 font-mono">
+                            No chart data available
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Widget Footer: AI Insight Summary */}
+                    {widget.insight_summary && (
+                      <div className="mt-3 pt-3 border-t border-slate-800/60 flex items-start gap-2 text-xs text-slate-300">
+                        <Sparkles className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
+                        <span className="line-clamp-2">{widget.insight_summary}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </main>
   );
 };

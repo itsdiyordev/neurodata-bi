@@ -6,7 +6,7 @@ import { LiveDbModal } from './components/LiveDbModal';
 import { DataSanitizerModal } from './components/DataSanitizerModal';
 import { ExecutiveReportModal } from './components/ExecutiveReportModal';
 import { AgentationWrapper } from './components/AgentationWrapper';
-import type { DataProfile, ChartConfig, ChatMessage, KPIData, CleaningReport, FailedQuery, WorkspaceTable, TableRelationship } from './types';
+import type { DataProfile, ChartConfig, ChatMessage, KPIData, CleaningReport, FailedQuery, WorkspaceTable, TableRelationship, ProactiveInsight, PinnedWidget } from './types';
 
 // Dynamic API base: uses relative /api when built/containerized, or localhost:8000 when running standalone Vite dev
 const API_BASE = (import.meta as any).env?.VITE_API_BASE || 
@@ -28,6 +28,11 @@ export const App: React.FC = () => {
   // Multi-Table Workspace State
   const [workspaceTables, setWorkspaceTables] = useState<WorkspaceTable[]>([]);
   const [relationships, setRelationships] = useState<TableRelationship[]>([]);
+
+  // Zero-Prompt Proactive Insights & Pinned Dashboard State
+  const [proactiveInsights, setProactiveInsights] = useState<ProactiveInsight[]>([]);
+  const [pinnedWidgets, setPinnedWidgets] = useState<PinnedWidget[]>([]);
+  const [canvasViewMode, setCanvasViewMode] = useState<'explorer' | 'dashboard'>('explorer');
 
   // Self-Healing Telemetry State
   const [isHealed, setIsHealed] = useState<boolean>(false);
@@ -72,6 +77,12 @@ export const App: React.FC = () => {
           }
           if (data.relationships) {
             setRelationships(data.relationships);
+          }
+          if (data.proactive_insights) {
+            setProactiveInsights(data.proactive_insights);
+          }
+          if (data.pinned_widgets) {
+            setPinnedWidgets(data.pinned_widgets);
           }
           if (data.profile.default_chart) {
             setChartConfig(data.profile.default_chart);
@@ -133,6 +144,12 @@ export const App: React.FC = () => {
       if (result.relationships) {
         setRelationships(result.relationships);
       }
+      if (result.proactive_insights) {
+        setProactiveInsights(result.proactive_insights);
+      }
+      if (result.pinned_widgets) {
+        setPinnedWidgets(result.pinned_widgets);
+      }
 
       if (profile.default_chart) {
         setChartConfig(profile.default_chart);
@@ -189,6 +206,12 @@ export const App: React.FC = () => {
       if (result.relationships) {
         setRelationships(result.relationships);
       }
+      if (result.proactive_insights) {
+        setProactiveInsights(result.proactive_insights);
+      }
+      if (result.pinned_widgets) {
+        setPinnedWidgets(result.pinned_widgets);
+      }
 
       if (profile.default_chart) {
         setChartConfig(profile.default_chart);
@@ -205,12 +228,80 @@ export const App: React.FC = () => {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         engine: 'DuckDB Persistent Engine',
       };
-      setMessages([welcomeMsg]);
+      setMessages((prev) => [...prev, welcomeMsg]);
     } catch (err: any) {
       alert(`Demo load error: ${err.message}`);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  // Pin Widget to Dashboard Handler
+  const handlePinWidget = async (widget: {
+    title: string;
+    sql_query: string;
+    chart_config: ChartConfig;
+    chart_data?: Record<string, any>[];
+    insight_summary?: string;
+  }) => {
+    try {
+      const res = await fetch(`${API_BASE}/dashboard/pin?session_id=${sessionId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Session-ID': sessionId,
+        },
+        body: JSON.stringify({
+          session_id: sessionId,
+          title: widget.title,
+          sql_query: widget.sql_query,
+          chart_config: widget.chart_config,
+          chart_data: widget.chart_data || tableData,
+          insight_summary: widget.insight_summary || latestAiExplanation || '',
+        }),
+      });
+      if (!res.ok) throw new Error('Failed to pin widget');
+      const data = await res.json();
+      if (data.pinned_widgets) {
+        setPinnedWidgets(data.pinned_widgets);
+      }
+    } catch (err: any) {
+      console.error('Error pinning widget:', err);
+    }
+  };
+
+  // Unpin Widget Handler
+  const handleUnpinWidget = async (widgetId: string) => {
+    try {
+      const res = await fetch(`${API_BASE}/dashboard/pin/${widgetId}?session_id=${sessionId}`, {
+        method: 'DELETE',
+        headers: {
+          'X-Session-ID': sessionId,
+        },
+      });
+      if (!res.ok) throw new Error('Failed to unpin widget');
+      const data = await res.json();
+      if (data.pinned_widgets) {
+        setPinnedWidgets(data.pinned_widgets);
+      }
+    } catch (err: any) {
+      console.error('Error unpinning widget:', err);
+    }
+  };
+
+  // Investigate Proactive Insight Handler
+  const handleInvestigateInsight = (insight: ProactiveInsight) => {
+    setCanvasViewMode('explorer');
+    if (insight.chart_config) {
+      setChartConfig(insight.chart_config);
+      if (insight.chart_config.data && insight.chart_config.data.length > 0) {
+        setTableData(insight.chart_config.data);
+      }
+    }
+    if (insight.sql_query) {
+      setSqlQuery(insight.sql_query);
+    }
+    handleSendMessage(insight.auto_prompt);
   };
 
   // 3. Switch Active Preview Table Handler
@@ -465,6 +556,30 @@ export const App: React.FC = () => {
         isHealed={isHealed}
         healingAttempts={healingAttempts}
         failedQueries={failedQueries}
+        proactiveInsights={proactiveInsights}
+        pinnedWidgets={pinnedWidgets}
+        canvasViewMode={canvasViewMode}
+        onViewModeChange={setCanvasViewMode}
+        onPinCurrentChart={() => {
+          if (!chartConfig) return;
+          handlePinWidget({
+            title: chartConfig.title || 'Pinned Chart',
+            sql_query: sqlQuery,
+            chart_config: chartConfig,
+            chart_data: tableData,
+            insight_summary: latestAiExplanation,
+          });
+        }}
+        onUnpinWidget={handleUnpinWidget}
+        onInvestigateInsight={handleInvestigateInsight}
+        onOpenWidgetInExplorer={(w) => {
+          setCanvasViewMode('explorer');
+          setChartConfig(w.chart_config);
+          if (w.chart_data && w.chart_data.length > 0) {
+            setTableData(w.chart_data);
+          }
+          setSqlQuery(w.sql_query);
+        }}
         onLoadDemo={handleLoadDemo}
         onUploadClick={() => {
           const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
@@ -484,6 +599,16 @@ export const App: React.FC = () => {
         onApiKeyChange={handleApiKeyChange}
         onClearMemory={handleClearMemory}
         onLoadOnCanvas={handleLoadOnCanvas}
+        onPinMessageWidget={(msg) => {
+          if (!msg.chart_config) return;
+          handlePinWidget({
+            title: msg.chart_config.title || 'Copilot Analysis',
+            sql_query: msg.sql_query || '',
+            chart_config: msg.chart_config,
+            chart_data: msg.chart_config.data || [],
+            insight_summary: msg.text,
+          });
+        }}
       />
 
       {/* Modal: Live SQL Database Connection (Phase 2) */}
@@ -517,6 +642,7 @@ export const App: React.FC = () => {
         healingAttempts={healingAttempts}
         cleaningReport={cleaningReport}
         sessionId={sessionId}
+        pinnedWidgets={pinnedWidgets}
       />
 
       {/* Agentation Visual Feedback Toolbar */}

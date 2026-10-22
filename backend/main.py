@@ -1,7 +1,7 @@
 import os
 import io
 import asyncio
-from typing import Optional
+from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -38,6 +38,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class PinWidgetPayload(BaseModel):
+    session_id: Optional[str] = None
+    title: str
+    sql_query: str
+    chart_config: Dict[str, Any]
+    chart_data: Optional[List[Dict[str, Any]]] = None
+    insight_summary: Optional[str] = ""
+
 class AskRequest(BaseModel):
     question: str = Field(..., min_length=2, max_length=1000, description="Analytical natural language question")
     session_id: Optional[str] = Field(None, description="Active session ID for persistent conversational memory")
@@ -69,7 +77,7 @@ async def restore_session(
 ):
     """
     Restores the full multi-table relational workspace, schema profile, KPIs,
-    detected relationships, and persistent chat history from DuckDB storage.
+    detected relationships, persistent chat history, proactive insights, and pinned dashboard widgets.
     """
     sid = session_id or x_session_id
     restored = await asyncio.to_thread(db_manager.restore_session, sid)
@@ -79,6 +87,11 @@ async def restore_session(
             "restored": False,
             "message": "No active dataset found in persistent storage. Please load demo data or upload a file."
         }
+
+    actual_sid = restored["session_id"]
+    proactive_insights = await asyncio.to_thread(db_manager.generate_proactive_insights, actual_sid)
+    pinned_widgets = await asyncio.to_thread(db_manager.get_pinned_widgets, actual_sid)
+
     return {
         "success": True,
         "restored": True,
@@ -89,7 +102,9 @@ async def restore_session(
         "workspace_tables": restored.get("workspace_tables", []),
         "relationships": restored.get("relationships", []),
         "cleaning_report": restored["cleaning_report"],
-        "chat_history": restored.get("chat_history", [])
+        "chat_history": restored.get("chat_history", []),
+        "proactive_insights": proactive_insights,
+        "pinned_widgets": pinned_widgets
     }
 
 @app.post("/api/demo")
@@ -99,7 +114,8 @@ async def load_demo(
 ):
     """
     Generates 3 interconnected relational tables (orders, customers, products),
-    sanitizes them through DataSanitizer, and loads them into persistent DuckDB with auto-JOIN detection.
+    sanitizes them through DataSanitizer, and loads them into persistent DuckDB with auto-JOIN detection,
+    proactive insights generation, and pre-seeded pinned dashboard widgets.
     """
     try:
         sid = session_id or x_session_id or "demo_session"
@@ -120,16 +136,66 @@ async def load_demo(
             primary_table="orders"
         )
 
-        workspace_tables = db_manager.get_workspace_tables()
-        relationships = db_manager.detect_relationships()
+        # Seed 2 default pinned widgets if none exist yet for immediate board experience
+        existing_pins = await asyncio.to_thread(db_manager.get_pinned_widgets, sid)
+        if not existing_pins:
+            trend_query = """SELECT strftime(CAST(order_date AS DATE), '%b %Y') as period, ROUND(SUM(revenue), 2) as total_revenue FROM orders GROUP BY 1, strftime(CAST(order_date AS DATE), '%Y-%m') ORDER BY strftime(CAST(order_date AS DATE), '%Y-%m') ASC;""".strip()
+            try:
+                trend_res = await asyncio.to_thread(db_manager.execute_query, trend_query)
+                await asyncio.to_thread(
+                    db_manager.save_pinned_widget,
+                    session_id=sid,
+                    title="Monthly Revenue Trend (March Anomaly)",
+                    sql_query=trend_query,
+                    chart_config={
+                        "type": "area",
+                        "x_key": "period",
+                        "y_key": "total_revenue",
+                        "title": "Monthly Revenue Trend (March Anomaly)"
+                    },
+                    chart_data=trend_res.get("data", []),
+                    insight_summary="Sales dropped noticeably in March 2024 due to critical supply chain bottlenecks before rebounding in Q2.",
+                    widget_id=f"demo_pin_1_{sid}"
+                )
+            except Exception as e:
+                print(f"[main] Demo pin 1 seed error: {e}")
+
+            cat_query = """SELECT p.category, ROUND(SUM(o.revenue), 2) as total_revenue FROM orders o JOIN products p ON o.product_id = p.product_id GROUP BY p.category ORDER BY total_revenue DESC;""".strip()
+            try:
+                cat_res = await asyncio.to_thread(db_manager.execute_query, cat_query)
+                await asyncio.to_thread(
+                    db_manager.save_pinned_widget,
+                    session_id=sid,
+                    title="Product Category Revenue Breakdown",
+                    sql_query=cat_query,
+                    chart_config={
+                        "type": "bar",
+                        "x_key": "category",
+                        "y_key": "total_revenue",
+                        "title": "Product Category Revenue Breakdown"
+                    },
+                    chart_data=cat_res.get("data", []),
+                    insight_summary="Cloud Infrastructure and Hardware represent over 72% of total transactional volume.",
+                    widget_id=f"demo_pin_2_{sid}"
+                )
+            except Exception as e:
+                print(f"[main] Demo pin 2 seed error: {e}")
+
+        workspace_tables = db_manager.get_workspace_tables(sid)
+        relationships = db_manager.detect_relationships(sid)
+        proactive_insights = await asyncio.to_thread(db_manager.generate_proactive_insights, sid)
+        pinned_widgets = await asyncio.to_thread(db_manager.get_pinned_widgets, sid)
 
         return {
             "success": True,
+            "session_id": sid,
             "message": "Multi-table relational demo workspace loaded (3 tables: orders, customers, products).",
             "profile": profile,
             "cleaning_report": cleaning_reports.get("orders"),
             "workspace_tables": workspace_tables,
-            "relationships": relationships
+            "relationships": relationships,
+            "proactive_insights": proactive_insights,
+            "pinned_widgets": pinned_widgets
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to load demo dataset: {str(e)}")
@@ -142,7 +208,7 @@ async def upload_file(
 ):
     """
     Uploads a CSV or Excel file as a new named table in the multi-table workspace.
-    Derives clean SQL table name and detects relational join keys with existing tables.
+    Derives clean SQL table name, detects relational join keys, and scans for proactive statistical insights.
     """
     filename = (file.filename or "").lower()
     if not (filename.endswith(".csv") or filename.endswith(".xlsx") or filename.endswith(".xls")):
@@ -186,8 +252,10 @@ async def upload_file(
             cleaning_report=cleaning_report
         )
 
-        workspace_tables = db_manager.get_workspace_tables()
-        relationships = db_manager.detect_relationships()
+        workspace_tables = db_manager.get_workspace_tables(sid)
+        relationships = db_manager.detect_relationships(sid)
+        proactive_insights = await asyncio.to_thread(db_manager.generate_proactive_insights, sid)
+        pinned_widgets = await asyncio.to_thread(db_manager.get_pinned_widgets, sid)
 
         return {
             "success": True,
@@ -197,7 +265,9 @@ async def upload_file(
             "profile": profile,
             "cleaning_report": cleaning_report,
             "workspace_tables": workspace_tables,
-            "relationships": relationships
+            "relationships": relationships,
+            "proactive_insights": proactive_insights,
+            "pinned_widgets": pinned_widgets
         }
     except HTTPException:
         raise
@@ -241,6 +311,51 @@ async def set_active_table(table_name: str):
         "profile": profile,
         "workspace_tables": db_manager.get_workspace_tables(),
         "relationships": db_manager.detect_relationships()
+    }
+
+@app.post("/api/dashboard/pin")
+async def pin_widget(
+    payload: PinWidgetPayload,
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """
+    Saves an interactive chart widget to the session's persistent pinned dashboard.
+    """
+    sid = payload.session_id or session_id or x_session_id or db_manager.active_session_id or "default_session"
+    widget = await asyncio.to_thread(
+        db_manager.save_pinned_widget,
+        session_id=sid,
+        title=payload.title,
+        sql_query=payload.sql_query,
+        chart_config=payload.chart_config,
+        chart_data=payload.chart_data,
+        insight_summary=payload.insight_summary or ""
+    )
+    all_widgets = await asyncio.to_thread(db_manager.get_pinned_widgets, sid)
+    return {
+        "success": True,
+        "widget": widget,
+        "pinned_widget": widget,
+        "pinned_widgets": all_widgets
+    }
+
+@app.delete("/api/dashboard/pin/{widget_id}")
+async def unpin_widget(
+    widget_id: str,
+    session_id: Optional[str] = Query(None),
+    x_session_id: Optional[str] = Header(None)
+):
+    """
+    Removes a pinned chart widget from the session's dashboard.
+    """
+    sid = session_id or x_session_id or db_manager.active_session_id or "default_session"
+    await asyncio.to_thread(db_manager.delete_pinned_widget, sid, widget_id)
+    all_widgets = await asyncio.to_thread(db_manager.get_pinned_widgets, sid)
+    return {
+        "success": True,
+        "removed_id": widget_id,
+        "pinned_widgets": all_widgets
     }
 
 @app.post("/api/ask")

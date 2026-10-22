@@ -7,7 +7,8 @@ import {
   FileText, 
   ShieldCheck, 
   Sparkles,
-  Code2
+  Code2,
+  Pin
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -22,7 +23,7 @@ import {
   Tooltip, 
   CartesianGrid 
 } from 'recharts';
-import type { KPIData, ChartConfig, CleaningReport } from '../types';
+import type { KPIData, ChartConfig, CleaningReport, PinnedWidget } from '../types';
 
 interface ExecutiveReportModalProps {
   isOpen: boolean;
@@ -38,6 +39,7 @@ interface ExecutiveReportModalProps {
   healingAttempts?: number;
   cleaningReport?: CleaningReport | null;
   sessionId?: string;
+  pinnedWidgets?: PinnedWidget[];
 }
 
 export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
@@ -54,6 +56,7 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
   healingAttempts,
   cleaningReport,
   sessionId,
+  pinnedWidgets = [],
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -73,6 +76,11 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
 
   const handleCopyMarkdown = () => {
     const dateStr = new Date().toLocaleString('en-US', { dateStyle: 'long', timeStyle: 'short' });
+    const pinnedMd = pinnedWidgets && pinnedWidgets.length > 0
+      ? `\n## Pinned Dashboard Widgets (${pinnedWidgets.length})\n` +
+        pinnedWidgets.map((w, idx) => `### ${idx + 1}. ${w.title}\n- **Insight**: ${w.insight_summary || 'N/A'}\n- **Type**: ${w.chart_config?.type || 'bar'}\n- **Query**:\n\`\`\`sql\n${w.sql_query}\n\`\`\``).join('\n\n') + '\n'
+      : '';
+
     const md = `# NEURODATA BI — EXECUTIVE INTELLIGENCE REPORT
 *Generated on ${dateStr} | Dataset: ${tableName}*
 
@@ -84,7 +92,7 @@ export const ExecutiveReportModal: React.FC<ExecutiveReportModalProps> = ({
 
 ## Strategic AI Analyst Summary
 > ${latestAiExplanation || 'Analytical synthesis across multi-dimensional customer segments, product categories, and temporal revenue velocity.'}
-
+${pinnedMd}
 ## Verified Analytical DuckDB SQL
 \`\`\`sql
 ${sqlQuery || `SELECT * FROM ${tableName} LIMIT 10`}
@@ -293,12 +301,45 @@ ${tableData.length > 0 ? (
             </div>
           )}
 
-          {/* Section 4: Verified DuckDB SQL Telemetry */}
+          {/* Section 4: Pinned Dashboard Widgets */}
+          {pinnedWidgets && pinnedWidgets.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between text-xs font-mono font-semibold uppercase tracking-wider text-slate-400 print:text-slate-700">
+                <span className="flex items-center gap-1.5">
+                  <Pin className="w-3.5 h-3.5 text-emerald-400 print:text-emerald-700" />
+                  <span>Pinned Dashboard Widgets ({pinnedWidgets.length})</span>
+                </span>
+                <span className="text-[10px] text-slate-500">Persistent Executive Grid</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {pinnedWidgets.map((widget) => (
+                  <div key={widget.id} className="p-3.5 rounded-xl bg-slate-900/50 print:bg-slate-50 border border-slate-800 print:border-slate-300 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-bold text-white print:text-slate-900 truncate">{widget.title}</h4>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 print:bg-slate-200 text-slate-400 print:text-slate-700">
+                        {widget.chart_config?.type || 'bar'}
+                      </span>
+                    </div>
+                    {widget.insight_summary && (
+                      <p className="text-[11px] text-slate-300 print:text-slate-700 leading-snug">
+                        {widget.insight_summary}
+                      </p>
+                    )}
+                    <pre className="p-2 rounded-lg bg-slate-950/80 print:bg-slate-200/70 text-[10px] font-mono text-indigo-300 print:text-indigo-900 overflow-x-auto whitespace-pre-wrap">
+                      {widget.sql_query}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Section 5: Verified DuckDB SQL Telemetry */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-xs font-mono font-semibold uppercase tracking-wider text-slate-400 print:text-slate-700">
               <span className="flex items-center gap-1.5">
                 <Code2 className="w-3.5 h-3.5" />
-                <span>03. Verified DuckDB SQL Telemetry</span>
+                <span>Verified DuckDB SQL Telemetry</span>
               </span>
               <span className="text-[10px] text-emerald-400 print:text-emerald-700">
                 ⚡ Runtime: {executionTimeMs || 3.8}ms • Read-Only Sandbox

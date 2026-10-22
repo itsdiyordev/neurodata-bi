@@ -17,7 +17,8 @@ import {
   Wrench,
   FlaskConical,
   Trash2,
-  RotateCcw
+  RotateCcw,
+  Pin
 } from 'lucide-react';
 import type { ChatMessage, ReasoningTraceStep } from '../types';
 
@@ -30,6 +31,7 @@ interface CopilotPanelProps {
   onApiKeyChange: (key: string) => void;
   onClearMemory: () => void;
   onLoadOnCanvas?: (msg: ChatMessage) => void;
+  onPinMessageWidget?: (msg: ChatMessage) => void;
 }
 
 export const CopilotPanel: React.FC<CopilotPanelProps> = ({
@@ -40,7 +42,8 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
   geminiApiKey,
   onApiKeyChange,
   onClearMemory,
-  onLoadOnCanvas
+  onLoadOnCanvas,
+  onPinMessageWidget
 }) => {
   const [mode, setMode] = useState<'analyst' | 'scientist'>('analyst');
   const [inputText, setInputText] = useState('');
@@ -358,16 +361,30 @@ export const CopilotPanel: React.FC<CopilotPanelProps> = ({
 
                       {/* Past Query Action: Load on Canvas */}
                       {msg.sender === 'ai' && (msg.sql_query || msg.chart_config) && onLoadOnCanvas && (
-                        <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between">
-                          <button
-                            type="button"
-                            onClick={() => onLoadOnCanvas(msg)}
-                            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono font-semibold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 hover:border-indigo-400/50 shadow-glow-indigo btn-press transition-all"
-                            title="Re-render this historical query chart and SQL directly onto the Main Canvas"
-                          >
-                            <RotateCcw className="w-3 h-3 text-indigo-400" />
-                            <span>🔄 Load on Canvas</span>
-                          </button>
+                        <div className="pt-2 border-t border-slate-800/60 flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => onLoadOnCanvas(msg)}
+                              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono font-semibold text-indigo-300 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 hover:border-indigo-400/50 shadow-glow-indigo btn-press transition-all"
+                              title="Re-render this historical query chart and SQL directly onto the Main Canvas"
+                            >
+                              <RotateCcw className="w-3 h-3 text-indigo-400" />
+                              <span>🔄 Load on Canvas</span>
+                            </button>
+
+                            {onPinMessageWidget && msg.chart_config && (
+                              <button
+                                type="button"
+                                onClick={() => onPinMessageWidget(msg)}
+                                className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-mono font-semibold text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 hover:border-emerald-400/50 shadow-glow-emerald btn-press transition-all"
+                                title="Pin this chart widget to your persistent Pinned Dashboard"
+                              >
+                                <Pin className="w-3 h-3 text-emerald-400" />
+                                <span>📌 Pin to Board</span>
+                              </button>
+                            )}
+                          </div>
                           <span className="text-[9px] font-mono text-slate-500">Historical Snapshot</span>
                         </div>
                       )}

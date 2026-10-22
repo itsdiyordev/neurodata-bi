@@ -116,3 +116,24 @@ export interface ChatMessage {
   context_summary?: string;
   execution_metrics?: ExecutionMetrics;
 }
+
+export interface ProactiveInsight {
+  id: string;
+  type: 'anomaly' | 'trend' | 'driver';
+  title: string;
+  description: string;
+  auto_prompt: string;
+  sql_query: string;
+  chart_config: ChartConfig;
+}
+
+export interface PinnedWidget {
+  id: string;
+  session_id: string;
+  title: string;
+  sql_query: string;
+  chart_config: ChartConfig;
+  chart_data?: Record<string, any>[];
+  insight_summary?: string;
+  created_at?: string;
+}

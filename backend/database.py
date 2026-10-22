@@ -2,6 +2,7 @@ import os
 import re
 import time
 import json
+import uuid
 import threading
 from typing import Dict, Any, List, Optional
 import duckdb
@@ -95,6 +96,18 @@ class DuckDBManager:
                     older_count INTEGER,
                     summary TEXT,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
+            self.con.execute("""
+                CREATE TABLE IF NOT EXISTS pinned_widgets (
+                    id VARCHAR PRIMARY KEY,
+                    session_id VARCHAR,
+                    title VARCHAR,
+                    sql_query TEXT,
+                    chart_config TEXT,
+                    chart_data TEXT,
+                    insight_summary TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
             """)
 
@@ -885,5 +898,316 @@ class DuckDBManager:
                 "columns": columns,
                 "data": data
             }
+
+    def save_pinned_widget(
+        self,
+        session_id: str,
+        title: str,
+        sql_query: str,
+        chart_config: Dict[str, Any],
+        chart_data: Optional[List[Dict[str, Any]]] = None,
+        insight_summary: str = "",
+        widget_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Saves a chart widget to the session's persistent pinned dashboard."""
+        with self.lock:
+            sid = (session_id or self.active_session_id or "default_session").strip()
+            wid = widget_id or f"pin_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+            config_json = json.dumps(chart_config or {})
+            data_json = json.dumps(chart_data or [])
+            self.con.execute("""
+                INSERT OR REPLACE INTO pinned_widgets
+                (id, session_id, title, sql_query, chart_config, chart_data, insight_summary, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """, [wid, sid, title, sql_query, config_json, data_json, insight_summary or ""])
+            return {
+                "id": wid,
+                "session_id": sid,
+                "title": title,
+                "sql_query": sql_query,
+                "chart_config": chart_config,
+                "chart_data": chart_data or [],
+                "insight_summary": insight_summary or ""
+            }
+
+    def delete_pinned_widget(self, session_id: str, widget_id: str) -> bool:
+        """Removes a pinned widget from DuckDB storage."""
+        with self.lock:
+            sid = (session_id or self.active_session_id or "default_session").strip()
+            self.con.execute("""
+                DELETE FROM pinned_widgets WHERE id = ? AND session_id = ?
+            """, [widget_id, sid])
+            return True
+
+    def get_pinned_widgets(self, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Returns all pinned dashboard widgets for the given session."""
+        with self.lock:
+            sid = (session_id or self.active_session_id or "default_session").strip()
+            try:
+                rows = self.con.execute("""
+                    SELECT id, session_id, title, sql_query, chart_config, chart_data, insight_summary, created_at
+                    FROM pinned_widgets
+                    WHERE session_id = ?
+                    ORDER BY created_at ASC
+                """, [sid]).fetchall()
+                results = []
+                for wid, s_id, title, sql, cfg_str, data_str, summary, created in rows:
+                    try:
+                        cfg = json.loads(cfg_str) if cfg_str else {}
+                    except Exception:
+                        cfg = {}
+                    try:
+                        data = json.loads(data_str) if data_str else []
+                    except Exception:
+                        data = []
+                    results.append({
+                        "id": wid,
+                        "session_id": s_id,
+                        "title": title,
+                        "sql_query": sql,
+                        "chart_config": cfg,
+                        "chart_data": data,
+                        "insight_summary": summary or "",
+                        "created_at": str(created)
+                    })
+                return results
+            except Exception as e:
+                print(f"[DuckDBManager] get_pinned_widgets error: {e}")
+                return []
+
+    def get_table_columns(self, tbl: str) -> List[Dict[str, Any]]:
+        """Returns column names and types for a table."""
+        with self.lock:
+            try:
+                schema_df = self.con.execute(f"DESCRIBE {tbl}").df()
+                cols = []
+                for _, row in schema_df.iterrows():
+                    cols.append({
+                        "name": str(row["column_name"]),
+                        "type": str(row["column_type"]).upper()
+                    })
+                return cols
+            except Exception:
+                return []
+
+    def generate_proactive_insights(self, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Zero-prompt proactive insight & anomaly scanner.
+        Runs fast statistical DuckDB queries across loaded tables to detect:
+        1. Time-series drops / spikes (critical anomalies)
+        2. Pareto / Top concentration drivers
+        3. High-margin / segment opportunity outliers
+        """
+        with self.lock:
+            if not self.has_data:
+                return []
+
+            insights: List[Dict[str, Any]] = []
+            tables = self.get_workspace_tables(session_id)
+            table_names = [t["table_name"] for t in tables]
+
+            # Determine primary fact table (prefer 'orders', else active table)
+            ts_table = "orders" if "orders" in table_names else self.table_name
+            columns = self.get_table_columns(ts_table)
+
+            date_col = next((c["name"] for c in columns if "date" in c["name"].lower() or "time" in c["name"].lower() or c["type"] in ("DATE", "TIMESTAMP")), None)
+            metric_col = next((c["name"] for c in columns if c["name"].lower() in ("revenue", "sales", "amount", "total") or c["type"] in ("DOUBLE", "DECIMAL", "INTEGER")), None)
+
+            # --- 1. TIME-SERIES ANOMALY DETECTION (Drops / Spikes) ---
+            if date_col and metric_col:
+                try:
+                    ts_sql = f"""
+                        SELECT 
+                            strftime(CAST({date_col} AS DATE), '%Y-%m') as ym,
+                            strftime(CAST({date_col} AS DATE), '%b %Y') as period,
+                            ROUND(SUM({metric_col}), 2) as total_metric
+                        FROM {ts_table}
+                        WHERE {date_col} IS NOT NULL
+                        GROUP BY 1, 2
+                        ORDER BY ym ASC;
+                    """
+                    ts_df = self.con.execute(ts_sql).df()
+                    if len(ts_df) >= 2:
+                        max_drop_pct = 0.0
+                        worst_period = None
+                        worst_prior = None
+                        worst_val = 0.0
+
+                        for i in range(1, len(ts_df)):
+                            prev_v = float(ts_df.iloc[i - 1]["total_metric"])
+                            curr_v = float(ts_df.iloc[i]["total_metric"])
+                            if prev_v > 0:
+                                pct_change = ((curr_v - prev_v) / prev_v) * 100.0
+                                if pct_change < max_drop_pct:
+                                    max_drop_pct = pct_change
+                                    worst_period = ts_df.iloc[i]["period"]
+                                    worst_prior = ts_df.iloc[i - 1]["period"]
+                                    worst_val = curr_v
+
+                        if worst_period and max_drop_pct <= -10.0:
+                            chart_rows = ts_df.rename(columns={"total_metric": f"total_{metric_col}"})[["period", f"total_{metric_col}"]].to_dict(orient="records")
+                            insights.append({
+                                "id": f"insight_anomaly_{ts_table}_{int(time.time() * 1000)}",
+                                "type": "anomaly",
+                                "title": f"⚠️ {worst_period} Drop ({max_drop_pct:.1f}%)",
+                                "description": f"Critical Anomaly: {metric_col.title()} dropped by {abs(max_drop_pct):.1f}% in {worst_period} compared to {worst_prior} (${worst_val:,.2f}).",
+                                "auto_prompt": f"Why did {metric_col} drop in {worst_period}? Break down by category and region to explain the root cause.",
+                                "sql_query": f"SELECT strftime(CAST({date_col} AS DATE), '%b %Y') as period, ROUND(SUM({metric_col}), 2) as total_{metric_col} FROM {ts_table} GROUP BY 1, strftime(CAST({date_col} AS DATE), '%Y-%m') ORDER BY strftime(CAST({date_col} AS DATE), '%Y-%m') ASC;",
+                                "chart_config": {
+                                    "type": "area",
+                                    "x_key": "period",
+                                    "y_key": f"total_{metric_col}",
+                                    "title": f"Monthly {metric_col.title()} Trend ({worst_period} Anomaly)",
+                                    "data": chart_rows
+                                }
+                            })
+                except Exception as e:
+                    print(f"[DuckDBManager] Anomaly check error: {e}")
+
+            # --- 2. PARETO / TOP CONCENTRATION DRIVER ---
+            if "orders" in table_names and "products" in table_names:
+                try:
+                    driver_sql = """
+                        SELECT 
+                            p.category as category,
+                            ROUND(SUM(o.revenue), 2) as total_revenue
+                        FROM orders o
+                        JOIN products p ON o.product_id = p.product_id
+                        GROUP BY p.category
+                        ORDER BY total_revenue DESC
+                        LIMIT 5;
+                    """
+                    cat_df = self.con.execute(driver_sql).df()
+                    if not cat_df.empty:
+                        total_rev = cat_df["total_revenue"].sum()
+                        top_cat = cat_df.iloc[0]["category"]
+                        top_val = cat_df.iloc[0]["total_revenue"]
+                        share_pct = (top_val / total_rev * 100) if total_rev > 0 else 0
+                        insights.append({
+                            "id": f"insight_driver_cat_{int(time.time() * 1000)}",
+                            "type": "driver",
+                            "title": f"🏆 Top Driver: {top_cat} ({share_pct:.1f}%)",
+                            "description": f"{top_cat} dominates category sales, driving {share_pct:.1f}% of total portfolio revenue (${top_val:,.2f}).",
+                            "auto_prompt": f"Analyze profitability and order frequency for {top_cat} compared to other categories.",
+                            "sql_query": driver_sql.strip(),
+                            "chart_config": {
+                                "type": "bar",
+                                "x_key": "category",
+                                "y_key": "total_revenue",
+                                "title": "Category Revenue Concentration",
+                                "data": cat_df.to_dict(orient="records")
+                            }
+                        })
+                except Exception as e:
+                    print(f"[DuckDBManager] Category driver check error: {e}")
+            else:
+                cat_col = next((c["name"] for c in columns if c["name"].lower() in ("category", "product", "region", "department", "segment") or (c["type"] == "VARCHAR" and c["name"] != date_col)), None)
+                if cat_col and metric_col:
+                    try:
+                        driver_sql = f"""
+                            SELECT 
+                                {cat_col} as dimension,
+                                ROUND(SUM({metric_col}), 2) as total_metric
+                            FROM {ts_table}
+                            WHERE {cat_col} IS NOT NULL
+                            GROUP BY 1
+                            ORDER BY total_metric DESC
+                            LIMIT 5;
+                        """
+                        cat_df = self.con.execute(driver_sql).df()
+                        if not cat_df.empty:
+                            total_m = cat_df["total_metric"].sum()
+                            top_dim = cat_df.iloc[0]["dimension"]
+                            top_v = cat_df.iloc[0]["total_metric"]
+                            share_pct = (top_v / total_m * 100) if total_m > 0 else 0
+                            insights.append({
+                                "id": f"insight_driver_{ts_table}_{int(time.time() * 1000)}",
+                                "type": "driver",
+                                "title": f"🏆 Top Driver: {top_dim} ({share_pct:.1f}%)",
+                                "description": f"{top_dim} accounts for {share_pct:.1f}% of total {metric_col} (${top_v:,.2f}), representing the primary performance driver.",
+                                "auto_prompt": f"Show detailed performance breakdown for {top_dim} in {ts_table}.",
+                                "sql_query": driver_sql.strip(),
+                                "chart_config": {
+                                    "type": "bar",
+                                    "x_key": "dimension",
+                                    "y_key": "total_metric",
+                                    "title": f"Concentration by {cat_col.title()}",
+                                    "data": cat_df.to_dict(orient="records")
+                                }
+                            })
+                    except Exception as e:
+                        print(f"[DuckDBManager] Driver check fallback error: {e}")
+
+            # --- 3. SEGMENT MARGIN / REGIONAL OUTLIER ---
+            if "orders" in table_names and "customers" in table_names and "products" in table_names:
+                try:
+                    seg_sql = """
+                        SELECT 
+                            c.segment as customer_segment,
+                            ROUND(SUM(o.revenue), 2) as total_revenue,
+                            ROUND(AVG(p.profit_margin) * 100, 1) as avg_margin_pct
+                        FROM orders o
+                        JOIN customers c ON o.customer_id = c.customer_id
+                        JOIN products p ON o.product_id = p.product_id
+                        GROUP BY c.segment
+                        ORDER BY total_revenue DESC;
+                    """
+                    seg_df = self.con.execute(seg_sql).df()
+                    if not seg_df.empty:
+                        top_seg = seg_df.iloc[0]["customer_segment"]
+                        top_margin = seg_df.iloc[0]["avg_margin_pct"]
+                        insights.append({
+                            "id": f"insight_trend_seg_{int(time.time() * 1000)}",
+                            "type": "trend",
+                            "title": f"📈 High-Value Segment: {top_seg} ({top_margin:.1f}% Margin)",
+                            "description": f"{top_seg} delivers the strongest gross profit margins ({top_margin:.1f}%) and highest transactional volume across customer tiers.",
+                            "auto_prompt": "Compare customer segments by revenue, margin, and order volume.",
+                            "sql_query": seg_sql.strip(),
+                            "chart_config": {
+                                "type": "bar",
+                                "x_key": "customer_segment",
+                                "y_key": "total_revenue",
+                                "title": "Customer Segment Margin & Revenue Distribution",
+                                "data": seg_df.to_dict(orient="records")
+                            }
+                        })
+                except Exception as e:
+                    print(f"[DuckDBManager] Segment check error: {e}")
+            else:
+                dim2 = next((c["name"] for c in columns if c["name"] != date_col and c["type"] == "VARCHAR"), None)
+                if dim2 and metric_col:
+                    try:
+                        seg_sql = f"""
+                            SELECT 
+                                {dim2} as segment,
+                                ROUND(SUM({metric_col}), 2) as total_metric
+                            FROM {ts_table}
+                            WHERE {dim2} IS NOT NULL
+                            GROUP BY 1
+                            ORDER BY total_metric DESC
+                            LIMIT 5;
+                        """
+                        seg_df = self.con.execute(seg_sql).df()
+                        if not seg_df.empty:
+                            top_dim2 = seg_df.iloc[0]["segment"]
+                            insights.append({
+                                "id": f"insight_trend_{ts_table}_{int(time.time() * 1000)}",
+                                "type": "trend",
+                                "title": f"📈 Dimension Trend: {top_dim2}",
+                                "description": f"{top_dim2} shows dominant volume across '{dim2}' in table {ts_table}.",
+                                "auto_prompt": f"Analyze distribution of {metric_col} across {dim2}.",
+                                "sql_query": seg_sql.strip(),
+                                "chart_config": {
+                                    "type": "bar",
+                                    "x_key": "segment",
+                                    "y_key": "total_metric",
+                                    "title": f"Distribution by {dim2.title()}",
+                                    "data": seg_df.to_dict(orient="records")
+                                }
+                            })
+                    except Exception as e:
+                        print(f"[DuckDBManager] Trend check fallback error: {e}")
+
+            return insights
 
 db_manager = DuckDBManager()
